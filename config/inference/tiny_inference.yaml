@@ -1,0 +1,8 @@
+inference:
+  checkpoint: outputs/synthetic_graph_pretrain/checkpoint_final.pt
+  vocab: outputs/synthetic_graph_pretrain/vocab.jsonl
+  max_steps: 8
+  sample: false
+  temperature: 1.0
+  device: cuda
+

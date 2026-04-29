@@ -1,0 +1,14 @@
+validation:
+  checkpoint: outputs/synthetic_graph_pretrain/checkpoint_final.pt
+  vocab: outputs/synthetic_graph_pretrain/vocab.jsonl
+  data_path: data/processed/mixed_graphs/train.jsonl
+  batch_size: 8
+  device: cuda
+  metrics:
+    - validation/loss
+    - validation/perplexity
+    - validation/token_accuracy
+    - validation/verifier/reward
+    - validation/code/pass_rate
+    - validation/lean/compile_success_rate
+    - validation/chem/smiles_valid_rate

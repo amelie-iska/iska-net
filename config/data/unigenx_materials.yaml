@@ -1,0 +1,11 @@
+data:
+  train_path: data/processed/unigenx_materials_crystal_system/train.jsonl
+  vocab_path: outputs/unigenx_materials_tiny/vocab.jsonl
+  reuse_vocab: false
+  min_freq: 1
+  max_source_tokens: 224
+  max_target_tokens: 64
+  extra_vocab_paths:
+    - data/processed/reference_tokens/naturelm_unigenx_tokens.txt
+  order_mode: sample
+  val_fraction: 0.2

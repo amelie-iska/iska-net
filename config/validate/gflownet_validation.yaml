@@ -1,0 +1,9 @@
+gflownet_validation:
+  checkpoint: outputs/gflownet_got_tiny/gflownet_final.pt
+  data_path: data/processed/synthetic_graphs/train.jsonl
+  output: outputs/gflownet_got_tiny/validation.json
+  batch_size: 8
+  max_traj_steps: 8
+  epsilon: 0.0
+  device: cuda
+

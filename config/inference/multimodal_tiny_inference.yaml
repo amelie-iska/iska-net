@@ -1,0 +1,8 @@
+inference:
+  checkpoint: outputs/multimodal_phase2_tiny/checkpoint_final.pt
+  vocab: outputs/multimodal_phase2_tiny/vocab.jsonl
+  max_steps: 12
+  max_source_tokens: 256
+  sample: false
+  temperature: 1.0
+  device: cuda

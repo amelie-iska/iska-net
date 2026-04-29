@@ -1,0 +1,41 @@
+seed: 203
+stage:
+  name: graph_state_baseline_tiny
+run:
+  output_dir: outputs/graph_state_ablation/baseline
+  device: cuda
+train:
+  batch_size: 8
+  eval_batch_size: 8
+  num_workers: 0
+  max_steps: 30
+  gradient_accumulation_steps: 1
+  learning_rate: 0.0005
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  amp: true
+  log_every: 5
+  eval_every: 15
+  checkpoint_every: 30
+loss:
+  topology_weight: 0.0
+  hidden_topology_collapse_weight: 0.0
+  hidden_js_geometry_weight: 0.0
+hidden_topology:
+  enabled: true
+  max_points: 32
+  bins: 16
+  log_every: 5
+tropical:
+  enabled: false
+  temperature: 1.0
+  temperature_min: 1.0
+  anneal_steps: 30
+wandb:
+  enabled: false
+  project: iska-ugm
+  mode: offline
+  group: graph-state-ablation
+  tags:
+    - graph-state
+    - baseline

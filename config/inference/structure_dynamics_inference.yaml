@@ -1,0 +1,8 @@
+inference:
+  checkpoint: outputs/structure_dynamics_4090/checkpoint_final.pt
+  vocab: outputs/structure_dynamics_4090/vocab.jsonl
+  max_steps: 24
+  max_source_tokens: 1024
+  sample: false
+  temperature: 1.0
+  device: cuda

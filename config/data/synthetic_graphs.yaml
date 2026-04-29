@@ -1,0 +1,10 @@
+data:
+  train_path: data/processed/synthetic_graphs/train.jsonl
+  vocab_path: outputs/synthetic_graph_pretrain/vocab.jsonl
+  reuse_vocab: true
+  min_freq: 1
+  max_source_tokens: 96
+  max_target_tokens: 32
+  order_mode: sample
+  val_fraction: 0.1
+

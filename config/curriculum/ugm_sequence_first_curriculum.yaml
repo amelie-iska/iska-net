@@ -1,0 +1,118 @@
+curriculum:
+  name: ugm_sequence_first
+  description: >
+    Ordered UGM curriculum. Early stages train only on text, protein/DNA/RNA
+    sequences, molecular SELFIES/SMILES sequences, morphology-aware graph
+    tokens, graph-state reasoning traces, and optional topology/tropical
+    regularizers. Actual structure files and trajectory-derived supervision are
+    validation/evaluation-only until a later explicitly approved phase.
+  global_guards:
+    enforce_sequence_only_molecules: true
+    forbid_actual_structure_files: true
+    allow_geometric_features: false
+    temperature_conditioning:
+      mode: continuous
+      min_kelvin: 300.0
+      max_kelvin: 400.0
+      anchor_kelvin: [400, 375, 350, 325, 300]
+      uma_oracle_uses_temperature: true
+    context_window_multiplier: 2.0
+    wandb_required_for_full_runs: true
+  stages:
+    - id: 00
+      name: acquire_reference_vocab
+      kind: preparation
+      outputs:
+        - data/processed/reference_tokens/naturelm_unigenx_tokens.txt
+        - data/processed/reference_tokens/multimodal_graph_tokens.txt
+      notes: "Reference vocab includes structure/oracle tokens for later, but early train data must not contain structure records."
+    - id: 01
+      name: naturelm_sfm_unigenx_sequence_sources
+      kind: dataset
+      dataset_config: config/data/naturelm_public_sources_entity.yaml
+      policy_check:
+        sequence_only_molecules: true
+        forbid_actual_structure_files: true
+      notes: "PubChem/UniProt/RefSeq public sources plus SFM/NatureLM and UniGenX reference tokens; molecule rows are SELFIES/SMILES sequence records only, and protein rows retain sequence-grounded function descriptions when available."
+    - id: 01b
+      name: function_description_alignment
+      kind: dataset
+      default_enabled: true
+      dataset_config: config/data/function_description_alignment.yaml
+      policy_check:
+        sequence_only_molecules: true
+        forbid_actual_structure_files: true
+      sources:
+        - NatureLM/SFM sequence-function records
+        - UniGenX sequence/function metadata after structure sanitization
+        - ProTrek-style protein sequence/function pairs
+        - UniProt/InterPro/GO/EC function annotations
+      notes: "Build graph-to-graph sequence/function examples for protein function descriptions, contrastive retrieval positives/negatives, and oracle-scored reasoning traces without structure inputs."
+    - id: 02
+      name: graph_state_baseline
+      kind: train
+      configs:
+        - config/model/tiny_tokengt.yaml
+        - config/data/naturelm_public_sources_entity.yaml
+        - config/train/graph_state_ablation_baseline_tiny.yaml
+      exploit_family: graph_state_evolution
+      notes: "Reasoning is graph-state evolution with hidden thought handles and non-linear thought topology."
+    - id: 03
+      name: topology_persistence_guidance
+      kind: train
+      configs:
+        - config/model/tiny_tokengt.yaml
+        - config/data/naturelm_public_sources_entity.yaml
+        - config/train/graph_state_ablation_topology_tiny.yaml
+      exploit_family: topology_persistence
+      compare_against: graph_state_baseline
+      notes: "Measures whether hidden distograms and H0 persistence/collapse guidance improve quality, diversity, or compute."
+    - id: 04
+      name: tropical_guidance
+      kind: train
+      configs:
+        - config/model/tiny_tokengt.yaml
+        - config/data/naturelm_public_sources_entity.yaml
+        - config/train/graph_state_ablation_tropical_tiny.yaml
+      exploit_family: tropical_selection
+      compare_against: graph_state_baseline
+      notes: "Temperature/selection diagnostics test whether sharper max-plus decisions help reasoning."
+    - id: 05
+      name: combined_topology_tropical
+      kind: train
+      configs:
+        - config/model/tiny_tokengt.yaml
+        - config/data/naturelm_public_sources_entity.yaml
+        - config/train/graph_state_ablation_topo_tropical_tiny.yaml
+      exploit_family: combined_regularization
+      compare_against:
+        - graph_state_baseline
+        - topology_persistence_guidance
+        - tropical_guidance
+    - id: 06
+      name: continuous_temperature_uma_oracle
+      kind: train
+      default_enabled: false
+      policy_check:
+        sequence_only_molecules: true
+        forbid_actual_structure_files: true
+      notes: "Condition UMA-style oracle rewards on continuous Kelvin features over roughly 300K-400K; anchors are curriculum/eval points only. Include function-description nodes in the graph state so UMA-guided 64-bin coupling, UMA-influence, token-motion, and trajectory-proxy records are grounded in sequence/function evidence. These fine-bin targets are active only in this UMA structure-dynamics-proxy stage, not in ordinary sequence/function rows."
+    - id: 07
+      name: optional_sequence_geometric_features
+      kind: ablation
+      default_enabled: false
+      policy_check:
+        sequence_only_molecules: true
+        forbid_actual_structure_files: true
+      notes: "May add string-derived 2D descriptor features, but no PDB/mmCIF/SDF/trajectory-derived input. Off by default."
+    - id: 90
+      name: structure_side_validation_only
+      kind: validation
+      default_enabled: false
+      allowed_purposes:
+        - validation
+        - test
+        - eval
+      forbidden_purpose:
+        - train
+      notes: "Actual structure files may be parsed for evaluation/test only under the current policy."

@@ -1,0 +1,15 @@
+gflownet_validation:
+  checkpoint: outputs/structure_dynamics_oracle_gflownet_4090/gflownet_final.pt
+  data_path: data/processed/structure_dynamics_graphs/val.jsonl
+  output: outputs/structure_dynamics_oracle_gflownet_4090/validation.json
+  batch_size: 8
+  max_traj_steps: 14
+  epsilon: 0.0
+  device: cuda
+oracle:
+  backend: fairchem
+  strict: true
+  fairchem_repo: data/external_repos/fairchem
+  model_name: uma-s-1p2
+  task_name: omol
+  device: cuda

@@ -1,0 +1,14 @@
+validation:
+  checkpoint: outputs/science_sft_tiny/checkpoint_final.pt
+  vocab: outputs/science_sft_tiny/vocab.jsonl
+  # PLAN-G smoke validation uses the full tiny science mix so UniGenX-QM9 and
+  # UniGenX-material metrics both fire.
+  data_path: data/processed/science_mix/all.jsonl
+  batch_size: 8
+  device: cuda
+  metrics:
+    - validation/loss
+    - validation/perplexity
+    - validation/token_accuracy
+    - validation/science/coordinate_node_count_mean
+    - validation/science/material_formula_count_mean

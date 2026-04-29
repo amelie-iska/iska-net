@@ -1,0 +1,10 @@
+data:
+  train_path: data/processed/curated_graphs/train.jsonl
+  val_path: data/processed/curated_graphs/val.jsonl
+  vocab_path: outputs/curated_graph_pretrain/vocab.jsonl
+  reuse_vocab: true
+  min_freq: 1
+  max_source_tokens: 160
+  max_target_tokens: 64
+  order_mode: sample
+

@@ -1,0 +1,7 @@
+inference:
+  checkpoint: outputs/science_sft_4090/checkpoint_final.pt
+  vocab: outputs/science_sft_4090/vocab.jsonl
+  max_steps: 12
+  sample: true
+  temperature: 0.8
+  device: cuda

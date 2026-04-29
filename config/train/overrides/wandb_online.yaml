@@ -1,0 +1,9 @@
+wandb:
+  enabled: true
+  project: iska-ugm
+  mode: online
+  tags:
+    - random-order
+    - tokengt
+    - 4090
+  group: production

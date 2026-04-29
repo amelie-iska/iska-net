@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iska-reasoner"
+version = "0.1.0"
+description = "Random-order TokenGT-style agentic reasoning research scaffold"
+requires-python = ">=3.10"
+dependencies = [
+  "torch",
+  "pyyaml",
+  "tqdm",
+  "wandb",
+  "numpy",
+  "networkx",
+  "datasets",
+  "huggingface_hub",
+  "transformers",
+  "tokenizers",
+  "scikit-learn",
+  "rdkit",
+  "selfies",
+  "soundfile",
+  "torchaudio",
+  "ripser",
+  "gudhi",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

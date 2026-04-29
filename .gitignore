@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Environments
+.env
+.venv/
+env/
+venv/
+
+# Training artifacts
+outputs/
+logs/
+wandb/
+tea_debug.log
+*.pt
+*.pth
+*.ckpt
+
+# Data policy: keep manifests/docs, ignore bulk data by default.
+data/raw/
+data/raw_hf_full/
+data/processed/
+data/samples/
+data/raw_motifs/
+data/external_repos/
+data/external_models/
+!data/README.md
+!data/manifests/
+!data/manifests/**
+
+# Upstream reference checkouts are acquired separately.
+tokengt/
+
+# Local editor/system files
+.DS_Store
+*~

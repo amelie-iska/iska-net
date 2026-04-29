@@ -1,0 +1,14 @@
+validation:
+  checkpoint: outputs/hebrew_sft_tiny/checkpoint_final.pt
+  vocab: outputs/hebrew_sft_tiny/vocab.jsonl
+  data_path: data/processed/hebrew_mix/all.jsonl
+  batch_size: 8
+  device: cuda
+  metrics:
+    - validation/loss
+    - validation/perplexity
+    - validation/token_accuracy
+    - validation/hebrew/root_node_count_mean
+    - validation/hebrew/template_node_count_mean
+    - validation/hebrew/binyan_node_count_mean
+    - validation/hebrew/derived_form_count_mean

@@ -1,0 +1,34 @@
+seed: 89
+stage:
+  name: gflownet_got
+run:
+  output_dir: outputs/structure_dynamics_oracle_gflownet_4090
+  device: cuda
+  train_disabled: true
+  disable_reason: "Actual structure-file or trajectory-derived oracle/GFlowNet training is disabled for the current curriculum. Use sequence/SELFIES training first and keep structure files evaluation-only."
+train:
+  batch_size: 8
+  max_steps: 3000
+  learning_rate: 0.00035
+  weight_decay: 0.0
+  log_every: 10
+gflownet:
+  max_actions: 192
+  hidden_dim: 256
+  init_log_z: 0.0
+  max_traj_steps: 14
+  epsilon: 0.05
+  use_context: true
+  learn_backward_policy: true
+  subtrajectory_weight: 0.1
+oracle:
+  backend: fairchem
+  strict: true
+  fairchem_repo: data/external_repos/fairchem
+  model_name: uma-s-1p2
+  task_name: omol
+  device: cuda
+wandb:
+  enabled: false
+  project: iska-ugm
+  mode: offline

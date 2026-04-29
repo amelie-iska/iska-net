@@ -1,0 +1,9 @@
+data:
+  train_path: data/processed/hebrew_sefaria_train/train.jsonl
+  val_path:
+  vocab_path: outputs/hebrew_sft_tiny/vocab.jsonl
+  reuse_vocab: true
+  min_freq: 1
+  max_source_tokens: 224
+  max_target_tokens: 80
+  order_mode: sample

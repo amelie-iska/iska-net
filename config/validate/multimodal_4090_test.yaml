@@ -1,0 +1,14 @@
+validation:
+  checkpoint: outputs/multimodal_phase2_4090/checkpoint_final.pt
+  vocab: outputs/multimodal_phase2_4090/vocab.jsonl
+  data_path: data/processed/multimodal_graphs/test.jsonl
+  batch_size: 1
+  device: cuda
+  metrics:
+    - validation/loss
+    - validation/perplexity
+    - validation/token_accuracy
+    - validation/multimodal/modality_count_mean
+    - validation/multimodal/bond_type_coverage_rate
+    - validation/multimodal/coordinate_node_count_mean
+    - validation/multimodal/oracle_feedback_target_rate

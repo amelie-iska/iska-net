@@ -1,0 +1,401 @@
+datasets:
+  - name: gsm8k_main_train
+    dataset_id: openai/gsm8k
+    config: main
+    split: train
+    method: hf_rows
+    license: mit
+    default_limit: 64
+    stage: math_reasoning
+  - name: gsm8k_main_test
+    dataset_id: openai/gsm8k
+    config: main
+    split: test
+    method: hf_rows
+    license: mit
+    default_limit: 64
+    stage: validation
+  - name: openmathinstruct2_train_1m
+    dataset_id: nvidia/OpenMathInstruct-2
+    config: default
+    split: train_1M
+    method: hf_rows
+    license: cc-by-4.0
+    default_limit: 64
+    stage: math_reasoning
+    notes: "Large synthetic math corpus; sample only by default."
+  - name: numinamath_cot_train
+    dataset_id: AI-MO/NuminaMath-CoT
+    config: default
+    split: train
+    method: hf_rows
+    license: apache-2.0
+    default_limit: 64
+    stage: math_reasoning
+  - name: numinamath_tir_train
+    dataset_id: AI-MO/NuminaMath-TIR
+    config: default
+    split: train
+    method: hf_rows
+    license: apache-2.0
+    default_limit: 64
+    stage: tool_sft
+  - name: bigcodebench_v014
+    dataset_id: bigcode/bigcodebench
+    config: default
+    split: v0.1.4
+    method: hf_rows
+    license: apache-2.0
+    default_limit: 64
+    stage: code_reasoning
+  - name: lean_workbook_train
+    dataset_id: internlm/Lean-Workbook
+    config: default
+    split: train
+    method: hf_rows
+    license: apache-2.0
+    default_limit: 32
+    stage: formal_proof
+  - name: proofnetsharp_valid
+    dataset_id: PAug/ProofNetSharp
+    config: default
+    split: valid
+    method: hf_rows
+    license: mit
+    default_limit: 64
+    stage: formal_proof
+  - name: moleculenet_lipophilicity
+    dataset_id: scikit-fingerprints/MoleculeNet_Lipophilicity
+    config: default
+    split: train
+    method: hf_rows
+    license: unknown
+    default_limit: 64
+    stage: molecule_reasoning
+    notes: "HF metadata reports unknown license; smoke-test only until provenance is reviewed."
+  - name: the_stack_v2
+    dataset_id: bigcode/the-stack-v2
+    config: default
+    split: train
+    method: hf_rows
+    license: gated/other
+    default_limit: 0
+    manifest_only: true
+    stage: code_pretraining
+  - name: zinc20
+    dataset_id: zpn/zinc20
+    config: default
+    split: train
+    method: hf_rows
+    license: mit
+    default_limit: 0
+    manifest_only: true
+    stage: molecule_pretraining
+  - name: unigenx_qm9_train
+    dataset_id: yairschiff/qm9
+    config: default
+    split: train
+    method: hf_rows
+    license: review-upstream
+    default_limit: 16
+    stage: unigenx_molecule
+    notes: "QM9-style molecule rows with atom symbols, coordinates, SMILES, and properties for UniGenX-style graphification."
+  - name: unigenx_materials_crystal_system
+    dataset_id: vinven7/materials-crystal-system-classification
+    config: default
+    split: train
+    method: hf_rows
+    license: review-upstream
+    default_limit: 16
+    stage: unigenx_material
+    notes: "Instruction rows mapping Materials Project formulas to crystal-system labels; used as a lightweight material graph smoke source."
+  - name: hebrew_sefaria_train
+    dataset_id: sivan22/sefaria-hebrew
+    config: default
+    split: train
+    method: hf_rows
+    license: CC-BY-SA/upstream
+    default_limit: 32
+    stage: hebrew_pretraining
+    notes: "Sefaria-derived Hebrew text rows; graphified with heuristic shoresh/template nodes."
+  - name: hebrew_synthetic_medical_train
+    dataset_id: cp500/synthetic_hebrew_medical_text
+    config: default
+    split: train
+    method: hf_rows
+    license: review-upstream
+    default_limit: 32
+    stage: hebrew_medical_pretraining
+    notes: "Synthetic Hebrew medical notes. Sparse dataset card; smoke-test only until provenance is reviewed."
+  - name: hebrew_wikianswers_lists
+    dataset_id: imvladikon/wikianswers_hebrew
+    config: lists
+    split: train
+    method: hf_rows
+    license: review-upstream
+    default_limit: 32
+    stage: hebrew_question_similarity
+    notes: "Question-like Hebrew text grouped by set_id."
+  - name: hebrew_wikianswers_queries
+    dataset_id: imvladikon/wikianswers_hebrew
+    config: queries
+    split: train
+    method: hf_rows
+    license: review-upstream
+    default_limit: 32
+    stage: hebrew_question_similarity
+    notes: "Query side of Hebrew WikiAnswers sentence-similarity data."
+  - name: hebrew_alpaca_train
+    dataset_id: ashercn97/hebrew_alpaca
+    config: default
+    split: train
+    method: hf_rows
+    license: review-upstream
+    default_limit: 32
+    stage: hebrew_instruction_sft
+    notes: "Hebrew instruction/input/output rows."
+  - name: talmud_hebrew_train
+    dataset_id: guyhadad01/Talmud-Hebrew
+    config: default
+    split: train
+    method: hf_rows
+    license: review-upstream
+    default_limit: 16
+    stage: hebrew_pretraining
+    notes: "Talmud Hebrew text rows; graphified as Hebrew text plus heuristic roots."
+  - name: hebrew_wikipedia_train
+    dataset_id: YanFren/Hebrew_wikipedia
+    config: default
+    split: train
+    method: hf_rows
+    license: mit
+    default_limit: 32
+    stage: hebrew_pretraining
+    notes: "MIT-tagged Hebrew Wikipedia text rows."
+  - name: hebrew_ud_htb
+    repo_url: https://github.com/UniversalDependencies/UD_Hebrew-HTB.git
+    method: git_clone
+    split: train
+    license: CC-BY-NC-SA-4.0
+    default_limit: 0
+    stage: hebrew_morphosyntax
+    notes: "Universal Dependencies Hebrew HTB CoNLL-U treebank; structured morphology backbone."
+  - name: hebrew_qa_nnlp
+    repo_url: https://github.com/NNLP-IL/Hebrew-Question-Answering-Dataset.git
+    method: git_clone
+    split: train
+    license: CC-BY-4.0
+    default_limit: 0
+    stage: hebrew_question_answering
+    notes: "HeQ Hebrew QA dataset repository."
+  - name: hebrew_nakdimon
+    repo_url: https://github.com/elazarg/nakdimon.git
+    method: git_clone
+    split: train
+    license: MIT
+    default_limit: 0
+    recurse_submodules: true
+    stage: hebrew_diacritization
+    notes: "Nakdimon Hebrew diacritizer repo. Uses available diacritized text/test files when cloned with submodules."
+  - name: hebrew_verb_complements_lexicon
+    method: local_file
+    split: train
+    license: user-provided/review-upstream
+    default_limit: 0
+    manifest_only: true
+    stage: hebrew_root_complements
+    notes: "Manifest-only until an official downloadable source is provided. Supported local TSV/CSV columns include verb_root, verb_binyan, verb_LexiconItem, verb_dottedLexiconItem, complement_LexiconItem."
+  - name: binding_affinity_public
+    dataset_id: jglaser/binding_affinity
+    config: default
+    split: train
+    method: hf_rows
+    license: review-upstream
+    default_limit: 16
+    stage: biomed_bioactivity
+    notes: "Protein-sequence/ligand-SMILES binding affinity substitute sourced from BindingDB/PDBbind/BioLIP/BindingMOAD; review upstream license before scaling."
+  - name: openai_graphwalks_train
+    dataset_id: openai/graphwalks
+    config: default
+    split: train
+    method: hf_rows
+    license: mit
+    default_limit: 0
+    stage: graph_reasoning
+    full_training_quality_rank: 1
+    notes: "Default full selected split. OpenAI multi-hop graph-walk benchmark; graphified into explicit graph nodes, directed edges, operation nodes, and answer-node targets."
+  - name: graphwiz_graphinstruct_rft_72k_train
+    dataset_id: GraphWiz/GraphInstruct-RFT-72K
+    config: default
+    split: train
+    method: hf_rows
+    license: review-upstream
+    default_limit: 0
+    stage: graph_reasoning
+    full_training_quality_rank: 2
+    notes: "Graph instruction/reasoning traces with explicit natural-language paths over graph tasks. Included after GraphWalks for breadth across graph problem types."
+  - name: pubchem10m_selfies_train
+    dataset_id: alxfgh/PubChem10M_SELFIES
+    config: default
+    split: train
+    method: hf_rows
+    license: review-upstream
+    default_limit: 0
+    stage: molecule_sequence_pretraining
+    full_training_quality_rank: 3
+    full_training_max_rows: 8000000
+    notes: "SELFIES-only molecule sequence pretraining source. No structure-file fields are consumed in phase 1. Row capped to keep the expanded default corpus near the 5B graph-token budget."
+  - name: uniprot_function_text_train
+    dataset_id: jonghyunlee/UniProt_function_text_descriptions
+    config: default
+    split: train
+    method: hf_rows
+    license: review-upstream
+    default_limit: 0
+    stage: protein_function_description
+    full_training_quality_rank: 4
+    notes: "Protein sequence plus grounded function text descriptions for sequence-to-function graph records."
+  - name: rfam_sequence_train
+    dataset_id: multimolecule/rfam
+    config: default
+    split: train
+    method: hf_rows
+    license: agpl-3.0
+    default_limit: 0
+    stage: rna_sequence_pretraining
+    full_training_quality_rank: 5
+    full_training_max_rows: 1000000
+    notes: "RNA family sequence corpus. Row capped in the default 5B graph-token selection; family/clan metadata is retained, structure files are not consumed."
+  - name: rnacentral_8192_sequence_train
+    dataset_id: multimolecule/rnacentral.8192
+    config: default
+    split: train
+    method: hf_rows
+    license: agpl-3.0
+    default_limit: 0
+    stage: rna_sequence_pretraining
+    full_training_quality_rank: 6
+    full_training_max_rows: 500000
+    notes: "Broad non-coding RNA sequence source capped for the default 5B graph-token selection."
+  - name: dna_coding_regions_train
+    dataset_id: GustavoHCruz/DNA_coding_regions
+    config: default
+    split: train
+    method: hf_rows
+    license: cc-by-4.0
+    default_limit: 0
+    stage: dna_sequence_pretraining
+    full_training_quality_rank: 7
+    full_training_max_rows: 500000
+    notes: "DNA coding-region sequence rows with exon/intron/protein translation annotations. No structure files are consumed."
+  - name: openmathreasoning_tir_train
+    dataset_id: nvidia/OpenMathReasoning
+    config: default
+    split: tir
+    method: hf_rows
+    license: cc-by-4.0
+    default_limit: 0
+    stage: math_tool_reasoning
+    full_training_quality_rank: 8
+    full_training_max_rows: 1300000
+    notes: "High-quality long tool-integrated math reasoning traces; included for verifier/tool-use behavior and reasoning quality. Row capped to preserve room for graph and sequence modalities."
+  - name: openmathreasoning_genselect_train
+    dataset_id: nvidia/OpenMathReasoning
+    config: default
+    split: genselect
+    method: hf_rows
+    license: cc-by-4.0
+    default_limit: 0
+    stage: math_solution_selection
+    full_training_quality_rank: 9
+    full_training_max_rows: 300000
+    notes: "Solution-selection traces over candidate mathematical proofs/derivations; useful for verifier-style ranking. Row capped because each row is token-dense after graphification."
+  - name: dclm_baseline_1b_train
+    dataset_id: codelion/dclm-baseline-1B
+    config: default
+    split: train
+    method: hf_rows
+    license: review-upstream/cc-by-4.0-parent
+    default_limit: 0
+    stage: general_quality_pretraining
+    full_training_quality_rank: 10
+    notes: "Reservoir-sampled tractable slice of DCLM baseline for general language quality without pulling the full 4T-token corpus."
+  - name: chembl_local_export
+    method: local_file
+    split: train
+    license: user-provided/review-upstream
+    default_limit: 0
+    manifest_only: true
+    stage: biomed_bioactivity
+    notes: "Use scripts/prepare_science_sources.py --kind chembl on local ChEMBL CSV/TSV exports with SMILES, target sequence/name, assay type/value, and units."
+  - name: bindingdb_local_export
+    method: local_file
+    split: train
+    license: user-provided/review-upstream
+    default_limit: 0
+    manifest_only: true
+    stage: biomed_bioactivity
+    notes: "Use scripts/prepare_science_sources.py --kind bindingdb on local BindingDB TSV/CSV exports."
+  - name: naturelm_pubchem_local
+    method: local_file
+    split: train
+    license: user-provided/review-upstream
+    default_limit: 0
+    manifest_only: true
+    stage: naturelm_science_reconstruction
+    notes: "Use scripts/prepare_science_sources.py --kind pubchem on local PubChem-derived rows."
+  - name: ugm_multimodal_synthetic
+    method: local_generated
+    split: train
+    license: project-generated
+    default_limit: 32
+    stage: multimodal_graph_to_graph
+    notes: "Use scripts/prepare_multimodal_sources.py --synthetic for phase-2 smoke data covering text, protein, SELFIES, DNA/RNA, atom/bond, temperature, coordinate, energy, and force records."
+  - name: ugm_multimodal_local
+    method: local_file
+    split: train
+    license: user-provided/review-upstream
+    default_limit: 0
+    manifest_only: true
+    stage: multimodal_graph_to_graph
+    notes: "Use scripts/prepare_multimodal_sources.py on reviewed local exports from UniProt/InterPro/PDB/AlphaFoldDB/GEOM/SPICE/OMol25/PubChem/ChEMBL/RNAcentral/Rfam/RNA3DHub-style sources."
+  - name: naturelm_uniprot_local
+    method: local_file
+    split: train
+    license: user-provided/review-upstream
+    default_limit: 0
+    manifest_only: true
+    stage: naturelm_science_reconstruction
+    notes: "Use scripts/prepare_science_sources.py --kind uniprot on local UniProt TSV/FASTA rows."
+  - name: naturelm_refseq_local
+    method: local_file
+    split: train
+    license: user-provided/review-upstream
+    default_limit: 0
+    manifest_only: true
+    stage: naturelm_science_reconstruction
+    notes: "Use scripts/prepare_science_sources.py --kind refseq on local RefSeq/NCBI FASTA rows."
+  - name: naturelm_materials_project_local
+    method: local_file
+    split: train
+    license: user-provided/review-upstream
+    default_limit: 0
+    manifest_only: true
+    stage: naturelm_science_reconstruction
+    notes: "Use scripts/prepare_science_sources.py --kind materials_project on local Materials Project rows."
+  - name: pdbbind_docking_local
+    method: local_file
+    split: train
+    license: user-provided/review-upstream
+    default_limit: 0
+    manifest_only: true
+    stage: protein_ligand_docking
+    notes: "Use scripts/prepare_science_sources.py --kind pdbbind on local protein-ligand docking rows with ligand SMILES, protein sequence, pocket atoms/coordinates, and affinity."
+  - name: ec_protein_generation_local
+    method: local_file
+    split: train
+    license: user-provided/review-upstream
+    default_limit: 0
+    manifest_only: true
+    stage: ec_protein_generation
+    notes: "Use scripts/prepare_science_sources.py --kind ec on local EC-number protein FASTA/CSV rows."

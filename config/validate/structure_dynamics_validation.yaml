@@ -1,0 +1,18 @@
+validation:
+  checkpoint: outputs/structure_dynamics_4090/checkpoint_final.pt
+  vocab: outputs/structure_dynamics_4090/vocab.jsonl
+  data_path: data/processed/structure_dynamics_graphs/val.jsonl
+  batch_size: 1
+  device: cuda
+  metrics:
+    - validation/loss
+    - validation/perplexity
+    - validation/token_accuracy
+    - validation/multimodal/all_atom_present_rate
+    - validation/multimodal/trajectory_present_rate
+    - validation/multimodal/bond_type_coverage_rate
+    - validation/multimodal/coordinate_node_count_mean
+    - validation/multimodal/frame_count_mean
+    - validation/multimodal/energy_record_rate
+    - validation/multimodal/force_record_rate
+    - validation/multimodal/oracle_feedback_target_rate

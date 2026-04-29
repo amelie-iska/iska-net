@@ -1,0 +1,11 @@
+validation:
+  checkpoint: outputs/real_data_tiny_local/checkpoint_final.pt
+  vocab: outputs/real_data_tiny_local/vocab.jsonl
+  data_path: data/processed/real_4090_mix/val.jsonl
+  batch_size: 8
+  max_batches: 32
+  device: cuda
+  metrics:
+    - validation/loss
+    - validation/perplexity
+    - validation/token_accuracy

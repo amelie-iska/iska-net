@@ -1,0 +1,37 @@
+seed: 89
+stage:
+  name: real_data_tiny_sft
+run:
+  output_dir: outputs/real_data_tiny_local
+  device: cuda
+train:
+  batch_size: 8
+  eval_batch_size: 8
+  num_workers: 0
+  max_steps: 500
+  gradient_accumulation_steps: 4
+  learning_rate: 0.0003
+  weight_decay: 0.01
+  scheduler: cosine
+  max_grad_norm: 1.0
+  amp: true
+  log_every: 10
+  eval_every: 100000
+  checkpoint_every: 250
+loss:
+  topology_weight: 0.05
+  numeric_diffusion_weight: 0.1
+tropical:
+  enabled: true
+  temperature: 1.0
+  temperature_min: 0.4
+  anneal_steps: 500
+wandb:
+  enabled: false
+  project: iska-ugm
+  mode: offline
+  group: real-data-tiny-local
+  tags:
+    - real-data
+    - busy-gpu-safe
+    - random-order

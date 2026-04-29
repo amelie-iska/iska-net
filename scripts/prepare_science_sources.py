@@ -1,0 +1,209 @@
+#!/usr/bin/env python
+from __future__ import annotations
+
+import argparse
+import csv
+import gzip
+import json
+import sys
+from pathlib import Path
+from typing import Any, Iterable, TextIO
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from tqdm.auto import tqdm
+
+from iska_reasoner.data.graphify import graphify_rows
+from iska_reasoner.utils.io import ensure_dir, write_jsonl
+
+
+def _open_text(path: Path) -> TextIO:
+    if path.suffix.lower() == ".gz":
+        return gzip.open(path, "rt", encoding="utf-8", errors="replace", newline="")
+    return path.open("r", encoding="utf-8", errors="replace", newline="")
+
+
+def _suffixes(path: Path) -> list[str]:
+    return [suffix.lower() for suffix in path.suffixes]
+
+
+def _has_suffix(path: Path, candidates: set[str]) -> bool:
+    return any(suffix in candidates for suffix in _suffixes(path))
+
+
+def _looks_like_pubchem_cid_smiles(path: Path) -> bool:
+    name = path.name.lower()
+    return "cid-smiles" in name or "cid_smiles" in name
+
+
+def iter_pubchem_cid_smiles(path: Path, limit: int | None = None) -> Iterable[dict[str, Any]]:
+    with _open_text(path) as handle:
+        for i, line in enumerate(handle):
+            if limit is not None and i >= limit:
+                break
+            line = line.strip()
+            if not line:
+                continue
+            pieces = line.split(None, 1)
+            if len(pieces) != 2:
+                continue
+            yield {"cid": pieces[0], "smiles": pieces[1], "Title": f"PubChem CID {pieces[0]}"}
+
+
+def iter_csv(path: Path, limit: int | None = None) -> Iterable[dict[str, Any]]:
+    if _looks_like_pubchem_cid_smiles(path):
+        yield from iter_pubchem_cid_smiles(path, limit)
+        return
+    delimiter = "\t" if _has_suffix(path, {".tsv", ".tab"}) else ","
+    with _open_text(path) as f:
+        reader = csv.DictReader(f, delimiter=delimiter)
+        for i, row in enumerate(reader):
+            if limit is not None and i >= limit:
+                break
+            yield dict(row)
+
+
+def iter_json_or_jsonl(path: Path, limit: int | None = None) -> Iterable[dict[str, Any]]:
+    if _has_suffix(path, {".jsonl"}):
+        with _open_text(path) as handle:
+            for i, line in enumerate(handle):
+                if limit is not None and i >= limit:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                yield json.loads(line)
+        return
+    with _open_text(path) as handle:
+        payload = json.loads(handle.read())
+    rows = payload if isinstance(payload, list) else payload.get("rows", [])
+    for i, row in enumerate(rows):
+        if limit is not None and i >= limit:
+            break
+        if isinstance(row, dict):
+            yield row
+
+
+def iter_fasta(path: Path, limit: int | None = None) -> Iterable[dict[str, Any]]:
+    header = ""
+    seq: list[str] = []
+    count = 0
+    with _open_text(path) as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith(">"):
+                if seq:
+                    yield fasta_row(header, "".join(seq))
+                    count += 1
+                    if limit is not None and count >= limit:
+                        return
+                header = line[1:]
+                seq = []
+            else:
+                seq.append(line)
+    if seq and (limit is None or count < limit):
+        yield fasta_row(header, "".join(seq))
+
+
+def fasta_row(header: str, sequence: str) -> dict[str, Any]:
+    ec = ""
+    for part in header.replace("|", " ").split():
+        if part.count(".") == 3 and all(piece.isdigit() or piece == "-" for piece in part.split(".")):
+            ec = part
+            break
+    return {"protein_sequence": sequence, "sequence": sequence, "ec_number": ec, "description": header}
+
+
+def normalize_row(row: dict[str, Any], kind: str) -> dict[str, Any]:
+    out = dict(row)
+    if kind == "pubchem":
+        out.setdefault("smiles", row.get("CanonicalSMILES") or row.get("canonical_smiles") or row.get("SMILES"))
+        out.setdefault("prompt", row.get("Title") or row.get("name") or row.get("description") or "")
+    elif kind in {"uniprot", "refseq", "ncbi", "ec"}:
+        out.setdefault("protein_sequence", row.get("Sequence") or row.get("sequence") or row.get("protein_sequence"))
+        out.setdefault("ec_number", row.get("EC number") or row.get("ec_number") or row.get("EC"))
+        function_text = (
+            row.get("function_description")
+            or row.get("function")
+            or row.get("description")
+            or row.get("protein_description")
+            or row.get("annotation")
+            or row.get("text")
+        )
+        if function_text:
+            out.setdefault("function_description", function_text)
+            out.setdefault("task", "function_description")
+            out.setdefault("prompt", "Generate sequence-grounded protein function records.")
+    elif kind in {"sfm", "naturelm", "protrek", "protein_function"}:
+        out.setdefault("protein_sequence", row.get("Sequence") or row.get("sequence") or row.get("protein_sequence") or row.get("aa_sequence"))
+        function_text = (
+            row.get("function_description")
+            or row.get("function")
+            or row.get("text")
+            or row.get("description")
+            or row.get("protein_description")
+            or row.get("annotation")
+            or row.get("summary")
+            or row.get("completion")
+            or row.get("output")
+        )
+        if function_text:
+            out.setdefault("function_description", function_text)
+        out.setdefault("task", row.get("task") or "function_description")
+        out.setdefault("prompt", row.get("prompt") or "Generate sequence-grounded protein function records.")
+    elif kind in {"materials", "materials_project"}:
+        out.setdefault("formula", row.get("formula_pretty") or row.get("formula") or row.get("material_formula"))
+        out.setdefault("mpid", row.get("material_id") or row.get("mpid") or row.get("Materials Project ID"))
+        out.setdefault("completion", row.get("crystal_system") or row.get("completion") or row.get("label") or "")
+    elif kind in {"chembl", "bindingdb", "bioactivity"}:
+        out.setdefault("smiles", row.get("canonical_smiles") or row.get("Ligand SMILES") or row.get("SMILES"))
+        out.setdefault("protein_sequence", row.get("Target Sequence") or row.get("target_sequence") or row.get("sequence"))
+        out.setdefault("standard_value", row.get("Standard Value") or row.get("Ki") or row.get("Kd") or row.get("IC50"))
+        out.setdefault("standard_units", row.get("Standard Units") or row.get("units"))
+        out.setdefault("standard_type", row.get("Standard Type") or row.get("type"))
+    elif kind in {"pdbbind", "docking"}:
+        out.setdefault("ligand_smiles", row.get("ligand_smiles") or row.get("smiles") or row.get("SMILES"))
+        out.setdefault("protein_sequence", row.get("protein_sequence") or row.get("sequence"))
+        out.setdefault("affinity", row.get("affinity") or row.get("binding_affinity"))
+    return out
+
+
+def iter_rows(paths: list[Path], kind: str, limit: int | None) -> Iterable[dict[str, Any]]:
+    emitted = 0
+    for path in paths:
+        if _has_suffix(path, {".fa", ".fasta", ".faa", ".fna"}):
+            iterator = iter_fasta(path, None if limit is None else limit - emitted)
+        elif _looks_like_pubchem_cid_smiles(path) or _has_suffix(path, {".csv", ".tsv", ".tab"}):
+            iterator = iter_csv(path, None if limit is None else limit - emitted)
+        else:
+            iterator = iter_json_or_jsonl(path, None if limit is None else limit - emitted)
+        for row in iterator:
+            yield normalize_row(row, kind)
+            emitted += 1
+            if limit is not None and emitted >= limit:
+                return
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Prepare local NatureLM/UniGenX-style science sources into graph JSONL.")
+    parser.add_argument("--input", action="append", required=True, help="CSV/TSV/JSON/JSONL/FASTA source file.")
+    parser.add_argument("--kind", required=True, choices=["pubchem", "uniprot", "refseq", "ncbi", "sfm", "naturelm", "protrek", "protein_function", "materials", "materials_project", "chembl", "bindingdb", "bioactivity", "pdbbind", "docking", "ec"])
+    parser.add_argument("--dataset-name", help="Override dataset name used for graphification.")
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--limit", type=int)
+    parser.add_argument("--expected-rows", type=int, help="Optional progress-bar total when streaming large compressed files.")
+    args = parser.parse_args()
+    paths = [Path(p) for p in args.input]
+    dataset_name = args.dataset_name or f"local_{args.kind}"
+    ensure_dir(Path(args.output).parent)
+    rows = iter_rows(paths, args.kind, args.limit)
+    total = args.expected_rows if args.expected_rows is not None else args.limit
+    graphs = tqdm(graphify_rows(rows, dataset_name), total=total, desc=f"science/{args.kind}", unit="ex")
+    count = write_jsonl(args.output, graphs)
+    print(json.dumps({"rows": count, "graphs": count, "output": args.output}, indent=2, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,30 @@
+seed: 71
+stage:
+  name: gflownet_got
+run:
+  output_dir: outputs/hebrew_root_gflownet_4090
+  device: cuda
+train:
+  batch_size: 32
+  max_steps: 3000
+  learning_rate: 0.0003
+  weight_decay: 0.0
+  log_every: 10
+gflownet:
+  max_actions: 128
+  hidden_dim: 256
+  init_log_z: 0.0
+  max_traj_steps: 12
+  epsilon: 0.05
+  use_context: true
+  learn_backward_policy: true
+  subtrajectory_weight: 0.1
+wandb:
+  enabled: true
+  project: iska-ugm
+  mode: online
+  group: hebrew-root-gflownet-4090
+  tags:
+    - hebrew
+    - roots
+    - gflownet

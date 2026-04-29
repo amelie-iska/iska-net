@@ -1,0 +1,15 @@
+gflownet_validation:
+  checkpoint: outputs/multimodal_oracle_gflownet_tiny/gflownet_final.pt
+  data_path: data/processed/multimodal_graphs/val.jsonl
+  output: outputs/multimodal_oracle_gflownet_tiny/validation.json
+  batch_size: 4
+  max_traj_steps: 10
+  epsilon: 0.0
+  device: cuda
+oracle:
+  backend: fairchem
+  strict: true
+  fairchem_repo: data/external_repos/fairchem
+  model_name: uma-s-1p2
+  task_name: omol
+  device: cuda

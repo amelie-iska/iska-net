@@ -1,0 +1,13 @@
+validation:
+  checkpoint: outputs/real_full_selected_local/checkpoint_final.pt
+  vocab: outputs/real_full_selected_local/vocab.jsonl
+  data_path: data/processed/real_full_selected_mix/test.jsonl
+  batch_size: 4
+  max_batches: 128
+  device: cuda
+  metrics:
+    - validation/loss
+    - validation/perplexity
+    - validation/token_accuracy
+    - validation/science/coordinate_node_count_mean
+    - validation/multimodal/bond_type_coverage_rate

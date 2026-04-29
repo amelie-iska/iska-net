@@ -1,0 +1,17 @@
+data:
+  train_path: data/processed/multimodal_graphs/train.jsonl
+  val_path: data/processed/multimodal_graphs/val.jsonl
+  vocab_path: outputs/multimodal_phase2_4090/vocab.jsonl
+  reuse_vocab: false
+  min_freq: 1
+  max_vocab_size: 262144
+  max_source_tokens: 1024
+  max_target_tokens: 256
+  max_numeric_targets: 32
+  enforce_sequence_only_molecules: true
+  forbid_actual_structure_files: true
+  allow_geometric_features: false
+  extra_vocab_paths:
+    - data/processed/reference_tokens/naturelm_unigenx_tokens.txt
+    - data/processed/reference_tokens/multimodal_graph_tokens.txt
+  order_mode: sample

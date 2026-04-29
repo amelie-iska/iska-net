@@ -1,0 +1,14 @@
+model:
+  hidden_dim: 384
+  num_layers: 8
+  num_heads: 8
+  ffn_dim: 1536
+  dropout: 0.1
+  max_seq_len: 512
+  max_nodes: 512
+  max_slots: 128
+  num_kinds: 8
+  endpoint_dim: 64
+  identifier_dim: 512
+  max_identifiers: 1024
+  topology_dim: 7

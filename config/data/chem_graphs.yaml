@@ -1,0 +1,10 @@
+data:
+  train_path: data/processed/moleculenet_lipophilicity/train.jsonl
+  vocab_path: outputs/chem_sft_tiny/vocab.jsonl
+  reuse_vocab: true
+  min_freq: 1
+  max_source_tokens: 192
+  max_target_tokens: 64
+  order_mode: sample
+  val_fraction: 0.2
+

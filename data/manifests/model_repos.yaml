@@ -1,0 +1,40 @@
+model_repos:
+  - name: sfm
+    provider: github
+    repo_url: https://github.com/amelie-iska/SFM.git
+    repo_type: reference_repo
+    local_dir: data/external_repos/sfm
+    license: MIT
+    notes: "Science Foundation Model repo containing the NatureLM README, checkpoint links, and domain-tagged examples."
+  - name: unigenx
+    provider: github
+    repo_url: https://github.com/amelie-iska/UniGenX.git
+    repo_type: reference_repo
+    local_dir: data/external_repos/unigenx
+    license: MIT
+    notes: "UniGenX implementation repo with tokenizer dictionaries, dataset code, diffusion loss, and model wrapper."
+  - name: fairchem
+    provider: github
+    repo_url: https://github.com/amelie-iska/fairchem.git
+    repo_type: oracle_repo
+    local_dir: data/external_repos/fairchem
+    license: MIT
+    notes: "Amelie Schreiber fork of FairChem. UGM uses this as the live FairChem/UMA oracle adapter source; UMA weights remain gated through Hugging Face facebook/UMA and are not downloaded by repo acquisition."
+  - name: naturelm_8x7b_hf_checkpoint
+    provider: hf_model
+    repo_id: microsoft/NatureLM-8x7B
+    repo_type: model
+    license: review-upstream
+    default_max_file_mb: 1
+    default_download_patterns:
+      - README.md
+    notes: "Optional NatureLM checkpoint metadata path referenced by SFM/NatureLM README. Do not download large checkpoint shards by default."
+  - name: naturelm_8x7b_inst_hf_checkpoint
+    provider: hf_model
+    repo_id: microsoft/NatureLM-8x7B-Inst
+    repo_type: model
+    license: review-upstream
+    default_max_file_mb: 1
+    default_download_patterns:
+      - README.md
+    notes: "Optional instruction-tuned NatureLM checkpoint metadata path referenced by SFM/NatureLM README. Do not download large checkpoint shards by default."

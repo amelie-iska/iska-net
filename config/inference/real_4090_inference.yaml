@@ -1,0 +1,8 @@
+inference:
+  checkpoint: outputs/real_4090_local/checkpoint_final.pt
+  vocab: outputs/real_4090_local/vocab.jsonl
+  max_steps: 12
+  max_source_tokens: 256
+  sample: false
+  temperature: 1.0
+  device: cuda

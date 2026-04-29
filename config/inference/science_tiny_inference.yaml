@@ -1,0 +1,7 @@
+inference:
+  checkpoint: outputs/science_sft_tiny/checkpoint_final.pt
+  vocab: outputs/science_sft_tiny/vocab.jsonl
+  max_steps: 8
+  sample: false
+  temperature: 1.0
+  device: cuda

@@ -1,0 +1,30 @@
+name: iska-ugm
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pytorch
+  - pytorch-cuda=12.1
+  - numpy
+  - pyyaml
+  - tqdm
+  - networkx
+  - pytest
+  - pip:
+      - wandb
+      - datasets
+      - huggingface_hub
+      - transformers
+      - tokenizers
+      - scikit-learn
+      - rich
+      - rdkit
+      - selfies
+      - soundfile
+      - torchaudio==2.8.0
+      - ripser
+      - gudhi
+      - -e .

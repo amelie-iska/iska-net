@@ -1,0 +1,3 @@
+train:
+  resume_from: outputs/real_data_tiny_local/checkpoint_step_250.pt
+  eval_every: 100000

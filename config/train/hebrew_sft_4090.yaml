@@ -1,0 +1,37 @@
+seed: 67
+stage:
+  name: hebrew_sft
+run:
+  output_dir: outputs/hebrew_sft_4090
+  device: cuda
+train:
+  batch_size: 2
+  eval_batch_size: 2
+  num_workers: 2
+  max_steps: 2000
+  gradient_accumulation_steps: 8
+  learning_rate: 0.0002
+  weight_decay: 0.01
+  scheduler: cosine
+  max_grad_norm: 1.0
+  amp: true
+  log_every: 10
+  eval_every: 200
+  checkpoint_every: 500
+loss:
+  topology_weight: 0.05
+tropical:
+  enabled: true
+  temperature: 1.0
+  temperature_min: 0.4
+  anneal_steps: 2000
+wandb:
+  enabled: true
+  project: iska-ugm
+  mode: online
+  group: hebrew-4090
+  tags:
+    - hebrew
+    - morphology
+    - roots
+    - random-order

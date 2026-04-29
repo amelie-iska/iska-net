@@ -1,0 +1,27 @@
+seed: 47
+stage:
+  name: chem_sft
+run:
+  output_dir: outputs/chem_sft_tiny
+  device: cuda
+train:
+  batch_size: 4
+  eval_batch_size: 4
+  num_workers: 0
+  max_steps: 20
+  gradient_accumulation_steps: 1
+  learning_rate: 0.0003
+  weight_decay: 0.01
+  scheduler: cosine
+  max_grad_norm: 1.0
+  amp: true
+  log_every: 5
+  eval_every: 10
+  checkpoint_every: 20
+loss:
+  topology_weight: 0.05
+wandb:
+  enabled: false
+  project: iska-ugm
+  mode: offline
+

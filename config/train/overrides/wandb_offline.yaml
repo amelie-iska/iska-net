@@ -1,0 +1,9 @@
+wandb:
+  enabled: true
+  project: iska-ugm
+  mode: offline
+  tags:
+    - random-order
+    - tokengt
+    - smoke
+  group: local-debug

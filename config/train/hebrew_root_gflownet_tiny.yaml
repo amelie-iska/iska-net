@@ -1,0 +1,25 @@
+seed: 71
+stage:
+  name: gflownet_got
+run:
+  output_dir: outputs/hebrew_root_gflownet_tiny
+  device: cuda
+train:
+  batch_size: 8
+  max_steps: 20
+  learning_rate: 0.0005
+  weight_decay: 0.0
+  log_every: 5
+gflownet:
+  max_actions: 96
+  hidden_dim: 128
+  init_log_z: 0.0
+  max_traj_steps: 10
+  epsilon: 0.08
+  use_context: true
+  learn_backward_policy: true
+  subtrajectory_weight: 0.1
+wandb:
+  enabled: false
+  project: iska-ugm
+  mode: offline

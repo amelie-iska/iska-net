@@ -1,0 +1,20 @@
+data:
+  train_path: data/processed/naturelm_public_sources_entity/train.jsonl
+  val_path: data/processed/naturelm_public_sources_entity/val.jsonl
+  vocab_path: outputs/naturelm_public_sources_entity/vocab.jsonl
+  reuse_vocab: false
+  min_freq: 1
+  max_source_tokens: 1024
+  max_target_tokens: 96
+  max_seq_len: 1024
+  order_mode: sample
+  enforce_sequence_only_molecules: true
+  forbid_actual_structure_files: true
+  allow_geometric_features: false
+  preload: false
+  num_workers: 2
+  batch_size: 1
+  extra_vocab_paths:
+    - data/processed/reference_tokens/naturelm_unigenx_tokens.txt
+    - data/processed/reference_tokens/motif_graph_tokens.txt
+    - data/processed/reference_tokens/multimodal_graph_tokens.txt

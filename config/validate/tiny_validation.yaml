@@ -1,0 +1,7 @@
+validation:
+  batch_size: 8
+  metrics:
+    - validation/loss
+    - validation/perplexity
+    - validation/token_accuracy
+

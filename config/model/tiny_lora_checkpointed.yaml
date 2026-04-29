@@ -1,0 +1,21 @@
+model:
+  hidden_dim: 96
+  num_layers: 2
+  num_heads: 4
+  ffn_dim: 192
+  dropout: 0.1
+  max_seq_len: 192
+  max_nodes: 192
+  max_slots: 64
+  num_kinds: 8
+  endpoint_dim: 24
+  identifier_dim: 192
+  max_identifiers: 384
+  topology_dim: 7
+  numeric_dim: 16
+  numeric_diffusion_steps: 16
+  gradient_checkpointing: true
+  lora_rank: 4
+  lora_alpha: 16.0
+  lora_dropout: 0.05
+  freeze_base_for_lora: false

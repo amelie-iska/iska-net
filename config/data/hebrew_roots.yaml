@@ -1,0 +1,9 @@
+data:
+  train_path: data/processed/hebrew_root_synthetic/train.jsonl
+  val_path:
+  vocab_path: outputs/hebrew_root_gflownet_tiny/vocab.jsonl
+  reuse_vocab: true
+  min_freq: 1
+  max_source_tokens: 160
+  max_target_tokens: 96
+  order_mode: sample

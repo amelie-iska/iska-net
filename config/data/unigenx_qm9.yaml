@@ -1,0 +1,14 @@
+data:
+  train_path: data/processed/unigenx_qm9_train/train.jsonl
+  vocab_path: outputs/unigenx_qm9_tiny/vocab.jsonl
+  reuse_vocab: false
+  min_freq: 1
+  max_source_tokens: 224
+  max_target_tokens: 64
+  enforce_sequence_only_molecules: true
+  forbid_actual_structure_files: true
+  allow_geometric_features: false
+  extra_vocab_paths:
+    - data/processed/reference_tokens/naturelm_unigenx_tokens.txt
+  order_mode: sample
+  val_fraction: 0.2
