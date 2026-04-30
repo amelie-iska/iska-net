@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
 from array import array
@@ -84,6 +85,7 @@ class GraphJsonlDataset(Dataset[GraphExample]):
         self.preload = preload
         self.transform = transform
         self._handle = None
+        self._handle_pid: int | None = None
         self.examples: list[GraphExample] | None = None
         self.offsets: array[int] = array("Q")
         if preload:
@@ -117,8 +119,12 @@ class GraphJsonlDataset(Dataset[GraphExample]):
                     pbar.update(len(line))
 
     def _row_at(self, index: int) -> dict[str, Any]:
-        if self._handle is None or self._handle.closed:
+        pid = os.getpid()
+        if self._handle is None or self._handle.closed or self._handle_pid != pid:
+            if self._handle is not None and not self._handle.closed:
+                self._handle.close()
             self._handle = self.path.open("rb")
+            self._handle_pid = pid
         self._handle.seek(int(self.offsets[index]))
         line = self._handle.readline()
         return json.loads(line.decode("utf-8"))
@@ -126,6 +132,7 @@ class GraphJsonlDataset(Dataset[GraphExample]):
     def __getstate__(self) -> dict[str, Any]:
         state = dict(self.__dict__)
         state["_handle"] = None
+        state["_handle_pid"] = None
         return state
 
     def __del__(self) -> None:
