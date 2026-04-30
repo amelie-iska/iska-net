@@ -32,7 +32,7 @@ from iska_reasoner.validation.evaluate import evaluate_model
 
 
 def _tensor_batch(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
-    return {key: value.to(device) if torch.is_tensor(value) else value for key, value in batch.items()}
+    return {key: value.to(device, non_blocking=True) if torch.is_tensor(value) else value for key, value in batch.items()}
 
 
 def _check_dataset_policy(dataset: GraphJsonlDataset, cfg: dict[str, Any], split: str, logger: Any) -> None:
@@ -154,21 +154,41 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
         order_mode=cfg["data"].get("order_mode", "sample"),
         seed=seed,
     )
+    requested_device = str(cfg["run"].get("device", "cuda"))
+    train_workers = int(cfg["train"].get("num_workers", 0))
+    eval_workers = int(cfg["train"].get("eval_num_workers", 0))
+    pin_memory = bool(cfg["train"].get("pin_memory", requested_device.startswith("cuda")))
+    persistent_workers = bool(cfg["train"].get("persistent_workers", True)) and train_workers > 0
+    prefetch_factor = cfg["train"].get("prefetch_factor")
+    train_loader_kwargs: dict[str, Any] = {
+        "batch_size": int(cfg["train"].get("batch_size", 4)),
+        "shuffle": True,
+        "num_workers": train_workers,
+        "collate_fn": collator,
+        "pin_memory": pin_memory,
+        "persistent_workers": persistent_workers,
+    }
+    if prefetch_factor is not None and train_workers > 0:
+        train_loader_kwargs["prefetch_factor"] = int(prefetch_factor)
     train_loader = DataLoader(
         train_ds,
-        batch_size=int(cfg["train"].get("batch_size", 4)),
-        shuffle=True,
-        num_workers=int(cfg["train"].get("num_workers", 0)),
-        collate_fn=collator,
+        **train_loader_kwargs,
     )
     val_loader = None
     if val_ds is not None:
+        val_loader_kwargs: dict[str, Any] = {
+            "batch_size": int(cfg["train"].get("eval_batch_size", cfg["train"].get("batch_size", 4))),
+            "shuffle": False,
+            "num_workers": eval_workers,
+            "collate_fn": collator,
+            "pin_memory": pin_memory,
+            "persistent_workers": bool(cfg["train"].get("persistent_workers", True)) and eval_workers > 0,
+        }
+        if prefetch_factor is not None and eval_workers > 0:
+            val_loader_kwargs["prefetch_factor"] = int(prefetch_factor)
         val_loader = DataLoader(
             val_ds,
-            batch_size=int(cfg["train"].get("eval_batch_size", cfg["train"].get("batch_size", 4))),
-            shuffle=False,
-            num_workers=0,
-            collate_fn=collator,
+            **val_loader_kwargs,
         )
 
     model_cfg = dict(cfg["model"])
@@ -189,6 +209,14 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
         len(train_ds),
         effective_batch,
         total_steps,
+    )
+    logger.info(
+        "DataLoader settings: train_workers=%d eval_workers=%d pin_memory=%s persistent_workers=%s prefetch_factor=%s",
+        train_workers,
+        eval_workers,
+        pin_memory,
+        persistent_workers,
+        prefetch_factor,
     )
     scheduler = None
     scheduler_name = cfg["train"].get("scheduler", "none")

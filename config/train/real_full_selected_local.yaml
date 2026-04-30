@@ -7,7 +7,11 @@ run:
 train:
   batch_size: 1
   eval_batch_size: 1
-  num_workers: 2
+  num_workers: 8
+  eval_num_workers: 2
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 4
   max_steps: full_epoch
   full_epochs: 1.0
   gradient_accumulation_steps: 32
