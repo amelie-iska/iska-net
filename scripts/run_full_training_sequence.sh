@@ -20,6 +20,13 @@ STOP_AFTER="${STOP_AFTER:-99}"
 DRY_RUN="${DRY_RUN:-0}"
 DEVICE="${DEVICE:-cuda}"
 VALIDATION_DEVICE="${VALIDATION_DEVICE:-$DEVICE}"
+MODEL_CONFIG="${MODEL_CONFIG:-config/model/max_4090_tokengt.yaml}"
+FULL_SELECTED_DATA_CONFIG="${FULL_SELECTED_DATA_CONFIG:-config/data/real_full_selected_mix.yaml}"
+FULL_SELECTED_TRAIN_CONFIG="${FULL_SELECTED_TRAIN_CONFIG:-config/train/real_full_selected_local.yaml}"
+FULL_SELECTED_VALIDATION_CONFIG="${FULL_SELECTED_VALIDATION_CONFIG:-config/validate/real_full_selected_validation.yaml}"
+FULL_SELECTED_TEST_CONFIG="${FULL_SELECTED_TEST_CONFIG:-config/validate/real_full_selected_test.yaml}"
+FULL_SELECTED_INFERENCE_CONFIG="${FULL_SELECTED_INFERENCE_CONFIG:-config/inference/real_full_selected_inference.yaml}"
+FULL_SELECTED_INFERENCE_OUTPUT="${FULL_SELECTED_INFERENCE_OUTPUT:-outputs/real_full_selected_local/infer_full_sequence.json}"
 MAX_TOTAL_GIB="${MAX_TOTAL_GIB:-32}"
 MAX_GRAPH_TOKENS="${MAX_GRAPH_TOKENS:-5000000000}"
 GRAPHIFY_BATCH_SIZE="${GRAPHIFY_BATCH_SIZE:-8192}"
@@ -58,7 +65,8 @@ export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 export TQDM_DYNAMIC_NCOLS="${TQDM_DYNAMIC_NCOLS:-1}"
 export TQDM_MININTERVAL="${TQDM_MININTERVAL:-0.5}"
 export CUDA_DEVICE_ORDER="${CUDA_DEVICE_ORDER:-PCI_BUS_ID}"
-export ROOT RUN_ID CONDA_ENV LOG_ROOT RUN_DIR DEVICE VALIDATION_DEVICE
+export ROOT RUN_ID CONDA_ENV LOG_ROOT RUN_DIR DEVICE VALIDATION_DEVICE MODEL_CONFIG
+export FULL_SELECTED_DATA_CONFIG FULL_SELECTED_TRAIN_CONFIG FULL_SELECTED_VALIDATION_CONFIG FULL_SELECTED_TEST_CONFIG FULL_SELECTED_INFERENCE_CONFIG FULL_SELECTED_INFERENCE_OUTPUT
 export MAX_TOTAL_GIB MAX_GRAPH_TOKENS GRAPHIFY_BATCH_SIZE GRAPHIFY_PROGRESS_EVERY COUNT_PROGRESS_EVERY
 export MULTIMODAL_COUNT MULTIMODAL_INPUT_DIR STRUCTURE_DYNAMICS_INPUT_DIR STRUCTURE_DYNAMICS_COUNT ENABLE_STRUCTURE_TRAINING SKIP_INTERPRO_MOTIF_DOWNLOAD INFERENCE_TEXT
 export SKIP_REFERENCE_REFRESH_IF_READY TRAINING_FIRST WANDB_ENABLED WANDB_MODE WANDB_PROJECT WANDB_GROUP WANDB_TAGS WANDB_LOG_COMMANDS
@@ -119,6 +127,13 @@ Environment overrides:
   DRY_RUN=1
   DEVICE=cuda
   VALIDATION_DEVICE=cuda
+  MODEL_CONFIG=config/model/max_4090_tokengt.yaml
+  FULL_SELECTED_DATA_CONFIG=config/data/real_full_selected_mix.yaml
+  FULL_SELECTED_TRAIN_CONFIG=config/train/real_full_selected_local.yaml
+  FULL_SELECTED_VALIDATION_CONFIG=config/validate/real_full_selected_validation.yaml
+  FULL_SELECTED_TEST_CONFIG=config/validate/real_full_selected_test.yaml
+  FULL_SELECTED_INFERENCE_CONFIG=config/inference/real_full_selected_inference.yaml
+  FULL_SELECTED_INFERENCE_OUTPUT=outputs/real_full_selected_local/infer_full_sequence.json
   MAX_TOTAL_GIB=32
   MAX_GRAPH_TOKENS=5000000000
   GRAPHIFY_BATCH_SIZE=8192
@@ -326,6 +341,8 @@ cat > "$SUMMARY_MD" <<EOF
 - Conda env: \`$CONDA_ENV\`
 - Device: \`$DEVICE\`
 - Validation device: \`$VALIDATION_DEVICE\`
+- Model config: \`$MODEL_CONFIG\`
+- Full selected configs: \`$FULL_SELECTED_DATA_CONFIG / $FULL_SELECTED_TRAIN_CONFIG\`
 - Full graph output: \`data/processed/real_full_selected_mix\`
 - Max selected graph-token budget: \`$MAX_GRAPH_TOKENS\`
 - Master log: \`$MASTER_LOG\`
@@ -341,6 +358,8 @@ EOF
 
 log "Run directory: $RUN_DIR"
 log "Full selected-corpus mode: manifest per-dataset caps are honored; total graph-token guard is MAX_GRAPH_TOKENS=$MAX_GRAPH_TOKENS."
+log "Model config: $MODEL_CONFIG"
+log "Full selected configs: data=$FULL_SELECTED_DATA_CONFIG train=$FULL_SELECTED_TRAIN_CONFIG val=$FULL_SELECTED_VALIDATION_CONFIG test=$FULL_SELECTED_TEST_CONFIG infer=$FULL_SELECTED_INFERENCE_CONFIG"
 log "TQDM_DYNAMIC_NCOLS=$TQDM_DYNAMIC_NCOLS TQDM_MININTERVAL=$TQDM_MININTERVAL PYTHONUNBUFFERED=$PYTHONUNBUFFERED"
 log "W&B: enabled=$WANDB_ENABLED project=$WANDB_PROJECT group=$WANDB_GROUP mode=$WANDB_MODE command_events=$WANDB_LOG_COMMANDS"
 log "TRAINING_FIRST=$TRAINING_FIRST SKIP_REFERENCE_REFRESH_IF_READY=$SKIP_REFERENCE_REFRESH_IF_READY"
@@ -475,27 +494,27 @@ YAML
 printf 'Full phase-1 training override written to %s\n' "$FULL_TRAIN_OVERRIDE"
 cat "$FULL_TRAIN_OVERRIDE"
 run_train_stage \
-  --config config/model/max_4090_tokengt.yaml \
-  --config config/data/real_full_selected_mix.yaml \
+  --config "$MODEL_CONFIG" \
+  --config "$FULL_SELECTED_DATA_CONFIG" \
   --config config/generated/real_full_selected_context_2x.yaml \
-  --config config/train/real_full_selected_local.yaml \
+  --config "$FULL_SELECTED_TRAIN_CONFIG" \
   --config "$FULL_TRAIN_OVERRIDE"
 run_cx python scripts/validate_stage.py \
-  --config config/validate/real_full_selected_validation.yaml \
+  --config "$FULL_SELECTED_VALIDATION_CONFIG" \
   --device "$VALIDATION_DEVICE"
 run_cx python scripts/validate_stage.py \
-  --config config/validate/real_full_selected_test.yaml \
+  --config "$FULL_SELECTED_TEST_CONFIG" \
   --device "$VALIDATION_DEVICE"
 run_cx python scripts/infer.py \
-  --config config/inference/real_full_selected_inference.yaml \
+  --config "$FULL_SELECTED_INFERENCE_CONFIG" \
   --text "$INFERENCE_TEXT" \
   --device "$VALIDATION_DEVICE" \
-  --output outputs/real_full_selected_local/infer_full_sequence.json
+  --output "$FULL_SELECTED_INFERENCE_OUTPUT"
 BASH
 
 run_stage "04" "science_sft" "Science SFT stage" <<'BASH'
 run_train_stage \
-  --config config/model/max_4090_tokengt.yaml \
+  --config "$MODEL_CONFIG" \
   --config config/data/science_mix.yaml \
   --config config/train/science_sft_4090.yaml
 run_cx python scripts/validate_stage.py \
@@ -505,7 +524,7 @@ BASH
 
 run_stage "05" "hebrew_sft" "Hebrew SFT stage" <<'BASH'
 run_train_stage \
-  --config config/model/max_4090_tokengt.yaml \
+  --config "$MODEL_CONFIG" \
   --config config/data/hebrew_mix.yaml \
   --config config/train/hebrew_sft_4090.yaml
 run_cx python scripts/validate_stage.py \
@@ -551,7 +570,7 @@ run_cx python scripts/curate_data.py \
   --val-ratio 0.2 \
   --test-ratio 0.1
 run_train_stage \
-  --config config/model/max_4090_tokengt.yaml \
+  --config "$MODEL_CONFIG" \
   --config config/data/multimodal_graphs_4090.yaml \
   --config config/train/multimodal_phase2_4090.yaml
 run_cx python scripts/validate_stage.py \
@@ -604,7 +623,7 @@ if [[ "$ENABLE_STRUCTURE_TRAINING" != "1" ]]; then
   exit 0
 fi
 run_train_stage \
-  --config config/model/max_4090_tokengt.yaml \
+  --config "$MODEL_CONFIG" \
   --config config/data/structure_dynamics_graphs.yaml \
   --config config/train/structure_dynamics_4090.yaml
 run_cx python scripts/validate_stage.py \

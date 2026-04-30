@@ -110,6 +110,12 @@ For the full phase 1 plus phase 2 curriculum, use the wrapper with the correct d
 ./scripts/run_full_phase1_phase2_training.sh
 ```
 
+To hold the same corpus, objectives, context limits, validation cadence, UMA preflight, and runner behavior while using the 250M-parameter UGM config, run:
+
+```bash
+./scripts/run_full_phase1_phase2_training_250m.sh
+```
+
 The script writes to `logs/full_training_sequence/<RUN_ID>/` and updates `logs/full_training_sequence/latest`. It uses `data/processed/real_full_selected_mix/`, honors manifest-local row caps such as the RNA/DNA caps, enforces `MAX_GRAPH_TOKENS=5000000000` by default, and generates a context config at `config/generated/real_full_selected_context_2x.yaml` so the model context is roughly 2x the largest row. The phase wrapper defaults to `TRAINING_FIRST=1`, `SKIP_REFERENCE_REFRESH_IF_READY=1`, `SKIP_INTERPRO_MOTIF_DOWNLOAD=1`, and `REQUIRE_UMA_WEIGHTS=1`, so if the graph corpus and reference vocabularies already exist it proceeds to training while still verifying/downloading the required FairChem/UMA weights before oracle stages. Phase-1 training is full-corpus by default: the runner writes a per-run override with `max_steps: full_epoch` and `FULL_TRAIN_EPOCHS=1.0`, so optimizer steps are computed from the actual train split length, batch size, and gradient accumulation rather than from a fixed smoke-test cap. Training stages automatically append `config/train/overrides/wandb_online.yaml`; shell stages and commands also log W&B runner events when `WANDB_ENABLED=1`.
 
 Common controls:
@@ -126,6 +132,7 @@ UMA_SCORE_SMOKE=1 scripts/run_full_phase1_phase2_training.sh
 FULL_TRAIN_EPOCHS=2.0 scripts/run_full_phase1_phase2_training.sh
 FULL_TRAIN_EVAL_MAX_BATCHES=full scripts/run_full_phase1_phase2_training.sh
 FULL_TRAIN_NUM_WORKERS=12 FULL_TRAIN_PREFETCH_FACTOR=6 scripts/run_full_phase1_phase2_training.sh
+MODEL_CONFIG=config/model/ugm_250m_tokengt.yaml scripts/run_full_phase1_phase2_training.sh
 TRAINING_FIRST=0 SKIP_INTERPRO_MOTIF_DOWNLOAD=0 scripts/run_full_phase1_phase2_training.sh
 ```
 
@@ -202,6 +209,8 @@ conda run -n tokengt python scripts/train_stage.py \
 ```
 
 `config/train/real_full_selected_local.yaml` sets `max_steps: full_epoch` and `full_epochs: 1.0`. For the current corpus this resolves to about 224k optimizer steps with `batch_size: 1` and `gradient_accumulation_steps: 32`, i.e. one pass over all 7,181,690 train examples. In-training validation is intentionally capped with `eval_max_batches: 512`; the stage still runs full validation and test after training through `scripts/validate_stage.py`. The full runner defaults to eight train DataLoader workers, pinned memory, persistent workers, and prefetching because the full corpus is an 83GB JSONL file and CPU graph parsing can otherwise leave the GPU underfed.
+
+The 250M setup uses `config/model/ugm_250m_tokengt.yaml`, `config/data/real_full_selected_mix_250m.yaml`, `config/train/real_full_selected_250m_local.yaml`, `config/validate/real_full_selected_250m_validation.yaml`, `config/validate/real_full_selected_250m_test.yaml`, and `config/inference/real_full_selected_250m_inference.yaml`. Its artifacts live under `outputs/real_full_selected_250m_local/` so it can be trained beside the default 576M run.
 
 ### Sequence-First Multimodal And FairChem/UMA Oracle Conditioning
 
@@ -680,9 +689,12 @@ For 4090-scale experiments, start from:
 
 ```bash
 config/model/max_4090_tokengt.yaml
+config/model/ugm_250m_tokengt.yaml
 ```
 
 With `max_vocab_size: 262144`, this profile is 576,767,128 trainable parameters with `max_seq_len: 1024`, `hidden_dim: 1024`, `num_layers: 24`, `num_heads: 16`, and `ffn_dim: 4096`.
+
+The 250M UGM profile keeps `max_seq_len: 1024`, `max_nodes: 1024`, `max_slots: 256`, `numeric_dim: 16`, and `numeric_diffusion_steps: 64`, while using `hidden_dim: 768`, `num_layers: 6`, `num_heads: 12`, and `ffn_dim: 3072`. With the same 262,144-token vocabulary, it profiles at 249,783,448 trainable parameters.
 
 The ready-to-run 4090 configs are:
 
