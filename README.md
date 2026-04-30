@@ -110,7 +110,7 @@ For the full phase 1 plus phase 2 curriculum, use the wrapper with the correct d
 ./scripts/run_full_phase1_phase2_training.sh
 ```
 
-The script writes to `logs/full_training_sequence/<RUN_ID>/` and updates `logs/full_training_sequence/latest`. It uses `data/processed/real_full_selected_mix/`, honors manifest-local row caps such as the RNA/DNA caps, enforces `MAX_GRAPH_TOKENS=5000000000` by default, and generates a context config at `config/generated/real_full_selected_context_2x.yaml` so the model context is roughly 2x the largest row. The phase wrapper defaults to `TRAINING_FIRST=1`, `SKIP_REFERENCE_REFRESH_IF_READY=1`, `SKIP_INTERPRO_MOTIF_DOWNLOAD=1`, and `REQUIRE_UMA_WEIGHTS=1`, so if the graph corpus and reference vocabularies already exist it proceeds to training while still verifying/downloading the required FairChem/UMA weights before oracle stages. Training stages automatically append `config/train/overrides/wandb_online.yaml`; shell stages and commands also log W&B runner events when `WANDB_ENABLED=1`.
+The script writes to `logs/full_training_sequence/<RUN_ID>/` and updates `logs/full_training_sequence/latest`. It uses `data/processed/real_full_selected_mix/`, honors manifest-local row caps such as the RNA/DNA caps, enforces `MAX_GRAPH_TOKENS=5000000000` by default, and generates a context config at `config/generated/real_full_selected_context_2x.yaml` so the model context is roughly 2x the largest row. The phase wrapper defaults to `TRAINING_FIRST=1`, `SKIP_REFERENCE_REFRESH_IF_READY=1`, `SKIP_INTERPRO_MOTIF_DOWNLOAD=1`, and `REQUIRE_UMA_WEIGHTS=1`, so if the graph corpus and reference vocabularies already exist it proceeds to training while still verifying/downloading the required FairChem/UMA weights before oracle stages. Phase-1 training is full-corpus by default: the runner writes a per-run override with `max_steps: full_epoch` and `FULL_TRAIN_EPOCHS=1.0`, so optimizer steps are computed from the actual train split length, batch size, and gradient accumulation rather than from a fixed smoke-test cap. Training stages automatically append `config/train/overrides/wandb_online.yaml`; shell stages and commands also log W&B runner events when `WANDB_ENABLED=1`.
 
 Common controls:
 
@@ -123,6 +123,8 @@ MAX_GRAPH_TOKENS=4500000000 scripts/run_full_phase1_phase2_training.sh
 WANDB_MODE=offline scripts/run_full_phase1_phase2_training.sh
 WANDB_ENABLED=0 scripts/run_full_phase1_phase2_training.sh
 UMA_SCORE_SMOKE=1 scripts/run_full_phase1_phase2_training.sh
+FULL_TRAIN_EPOCHS=2.0 scripts/run_full_phase1_phase2_training.sh
+FULL_TRAIN_EVAL_MAX_BATCHES=full scripts/run_full_phase1_phase2_training.sh
 TRAINING_FIRST=0 SKIP_INTERPRO_MOTIF_DOWNLOAD=0 scripts/run_full_phase1_phase2_training.sh
 ```
 
@@ -188,7 +190,7 @@ conda run -n tokengt python scripts/check_dataset_integrity.py \
 
 After a completed integrity-checked graphification, the full public selected-split graph corpus is `data/processed/real_full_selected_mix/`. The old baseline counts are preserved in `planning/FULL-PRETRAINING-DATASET.md`; the expanded counts are produced by the next full run and must report `within_model_sequence_token_budget: true` before training starts.
 
-When the 4090 is free, train on the full selected corpus:
+When the 4090 is free, train on the full selected corpus. The default full selected-corpus training config now uses one full pass over the train split:
 
 ```bash
 conda run -n tokengt python scripts/train_stage.py \
@@ -197,6 +199,8 @@ conda run -n tokengt python scripts/train_stage.py \
   --config config/generated/real_full_selected_context_2x.yaml \
   --config config/train/real_full_selected_local.yaml
 ```
+
+`config/train/real_full_selected_local.yaml` sets `max_steps: full_epoch` and `full_epochs: 1.0`. For the current corpus this resolves to about 224k optimizer steps with `batch_size: 1` and `gradient_accumulation_steps: 32`, i.e. one pass over all 7,181,690 train examples. In-training validation is intentionally capped with `eval_max_batches: 512`; the stage still runs full validation and test after training through `scripts/validate_stage.py`.
 
 ### Sequence-First Multimodal And FairChem/UMA Oracle Conditioning
 

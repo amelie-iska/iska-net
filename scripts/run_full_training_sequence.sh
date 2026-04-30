@@ -33,6 +33,10 @@ ENABLE_STRUCTURE_TRAINING="${ENABLE_STRUCTURE_TRAINING:-0}"
 SKIP_INTERPRO_MOTIF_DOWNLOAD="${SKIP_INTERPRO_MOTIF_DOWNLOAD:-0}"
 SKIP_REFERENCE_REFRESH_IF_READY="${SKIP_REFERENCE_REFRESH_IF_READY:-1}"
 TRAINING_FIRST="${TRAINING_FIRST:-0}"
+FULL_TRAIN_EPOCHS="${FULL_TRAIN_EPOCHS:-1.0}"
+FULL_TRAIN_EVAL_EVERY="${FULL_TRAIN_EVAL_EVERY:-10000}"
+FULL_TRAIN_EVAL_MAX_BATCHES="${FULL_TRAIN_EVAL_MAX_BATCHES:-512}"
+FULL_TRAIN_CHECKPOINT_EVERY="${FULL_TRAIN_CHECKPOINT_EVERY:-5000}"
 WANDB_ENABLED="${WANDB_ENABLED:-1}"
 WANDB_MODE="${WANDB_MODE:-online}"
 WANDB_PROJECT="${WANDB_PROJECT:-iska-ugm}"
@@ -55,6 +59,7 @@ export ROOT RUN_ID CONDA_ENV LOG_ROOT RUN_DIR DEVICE VALIDATION_DEVICE
 export MAX_TOTAL_GIB MAX_GRAPH_TOKENS GRAPHIFY_BATCH_SIZE GRAPHIFY_PROGRESS_EVERY COUNT_PROGRESS_EVERY
 export MULTIMODAL_COUNT MULTIMODAL_INPUT_DIR STRUCTURE_DYNAMICS_INPUT_DIR STRUCTURE_DYNAMICS_COUNT ENABLE_STRUCTURE_TRAINING SKIP_INTERPRO_MOTIF_DOWNLOAD INFERENCE_TEXT
 export SKIP_REFERENCE_REFRESH_IF_READY TRAINING_FIRST WANDB_ENABLED WANDB_MODE WANDB_PROJECT WANDB_GROUP WANDB_TAGS WANDB_LOG_COMMANDS
+export FULL_TRAIN_EPOCHS FULL_TRAIN_EVAL_EVERY FULL_TRAIN_EVAL_MAX_BATCHES FULL_TRAIN_CHECKPOINT_EVERY
 export REQUIRE_UMA_WEIGHTS UMA_MODEL_NAME UMA_TASK_NAME UMA_DEVICE UMA_SCORE_SMOKE
 
 timestamp() {
@@ -123,6 +128,10 @@ Environment overrides:
   SKIP_INTERPRO_MOTIF_DOWNLOAD=0
   SKIP_REFERENCE_REFRESH_IF_READY=1
   TRAINING_FIRST=0   # set to 1 to use existing data/vocab artifacts and start training quickly
+  FULL_TRAIN_EPOCHS=1.0
+  FULL_TRAIN_EVAL_EVERY=10000
+  FULL_TRAIN_EVAL_MAX_BATCHES=512  # set to full/0 for full validation during training
+  FULL_TRAIN_CHECKPOINT_EVERY=5000
   REQUIRE_UMA_WEIGHTS=1
   UMA_MODEL_NAME=uma-s-1p2
   UMA_TASK_NAME=omol
@@ -317,6 +326,8 @@ cat > "$SUMMARY_MD" <<EOF
 - Progress events: \`$PROGRESS_JSONL\`
 - W&B enabled: \`$WANDB_ENABLED\`
 - W&B project/group/mode: \`$WANDB_PROJECT / $WANDB_GROUP / $WANDB_MODE\`
+- Full phase-1 training epochs: \`$FULL_TRAIN_EPOCHS\`
+- In-training validation: every \`$FULL_TRAIN_EVAL_EVERY\` steps, max batches \`$FULL_TRAIN_EVAL_MAX_BATCHES\`
 
 EOF
 
@@ -325,6 +336,7 @@ log "Full selected-corpus mode: manifest per-dataset caps are honored; total gra
 log "TQDM_DYNAMIC_NCOLS=$TQDM_DYNAMIC_NCOLS TQDM_MININTERVAL=$TQDM_MININTERVAL PYTHONUNBUFFERED=$PYTHONUNBUFFERED"
 log "W&B: enabled=$WANDB_ENABLED project=$WANDB_PROJECT group=$WANDB_GROUP mode=$WANDB_MODE command_events=$WANDB_LOG_COMMANDS"
 log "TRAINING_FIRST=$TRAINING_FIRST SKIP_REFERENCE_REFRESH_IF_READY=$SKIP_REFERENCE_REFRESH_IF_READY"
+log "FULL_TRAIN_EPOCHS=$FULL_TRAIN_EPOCHS FULL_TRAIN_EVAL_EVERY=$FULL_TRAIN_EVAL_EVERY FULL_TRAIN_EVAL_MAX_BATCHES=$FULL_TRAIN_EVAL_MAX_BATCHES FULL_TRAIN_CHECKPOINT_EVERY=$FULL_TRAIN_CHECKPOINT_EVERY"
 log "UMA: require_weights=$REQUIRE_UMA_WEIGHTS model=$UMA_MODEL_NAME task=$UMA_TASK_NAME device=$UMA_DEVICE score_smoke=$UMA_SCORE_SMOKE"
 
 run_stage "00" "readiness" "Readiness and local capacity" <<'BASH'
@@ -437,11 +449,23 @@ fi
 run_cx python scripts/check_dataset_integrity.py \
   --data-dir data/processed/real_full_selected_mix \
   --output data/processed/real_full_selected_mix/integrity.json
+FULL_TRAIN_OVERRIDE="$RUN_DIR/full_selected_training_override.yaml"
+cat > "$FULL_TRAIN_OVERRIDE" <<YAML
+train:
+  max_steps: full_epoch
+  full_epochs: $FULL_TRAIN_EPOCHS
+  eval_every: $FULL_TRAIN_EVAL_EVERY
+  eval_max_batches: $FULL_TRAIN_EVAL_MAX_BATCHES
+  checkpoint_every: $FULL_TRAIN_CHECKPOINT_EVERY
+YAML
+printf 'Full phase-1 training override written to %s\n' "$FULL_TRAIN_OVERRIDE"
+cat "$FULL_TRAIN_OVERRIDE"
 run_train_stage \
   --config config/model/max_4090_tokengt.yaml \
   --config config/data/real_full_selected_mix.yaml \
   --config config/generated/real_full_selected_context_2x.yaml \
-  --config config/train/real_full_selected_local.yaml
+  --config config/train/real_full_selected_local.yaml \
+  --config "$FULL_TRAIN_OVERRIDE"
 run_cx python scripts/validate_stage.py \
   --config config/validate/real_full_selected_validation.yaml \
   --device "$VALIDATION_DEVICE"

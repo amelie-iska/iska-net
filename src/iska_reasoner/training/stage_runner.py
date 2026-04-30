@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,37 @@ def _check_dataset_policy(dataset: GraphJsonlDataset, cfg: dict[str, Any], split
     if violations:
         joined = "\n".join(violations)
         raise ValueError(f"Dataset policy violation in {split} split:\n{joined}")
+
+
+def _resolve_total_steps(cfg: dict[str, Any], train_examples: int) -> int:
+    train_cfg = cfg["train"]
+    batch_size = max(1, int(train_cfg.get("batch_size", 4)))
+    grad_accum = max(1, int(train_cfg.get("gradient_accumulation_steps", 1)))
+    effective_batch = batch_size * grad_accum
+    steps_per_epoch = max(1, math.ceil(train_examples / effective_batch))
+
+    max_steps = train_cfg.get("max_steps", 100)
+    max_steps_text = str(max_steps).strip().lower() if max_steps is not None else ""
+    full_epoch_requested = max_steps_text in {"auto", "epoch", "full_epoch", "full-dataset", "full_dataset"}
+    epochs = train_cfg.get("full_epochs", train_cfg.get("epochs"))
+    if epochs is not None or full_epoch_requested:
+        epoch_count = float(epochs if epochs is not None else 1.0)
+        if epoch_count <= 0:
+            raise ValueError(f"full_epochs must be positive, got {epoch_count}")
+        return max(1, math.ceil(steps_per_epoch * epoch_count))
+    return max(1, int(max_steps))
+
+
+def _optional_positive_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in {"", "none", "null", "full", "all", "0"}:
+        return None
+    parsed = int(value)
+    if parsed < 0:
+        raise ValueError(f"Expected a non-negative integer or 'full', got {value!r}")
+    return parsed or None
 
 
 def run_training_stage(cfg: dict[str, Any]) -> None:
@@ -150,23 +182,31 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
         lr=float(cfg["train"].get("learning_rate", 3e-4)),
         weight_decay=float(cfg["train"].get("weight_decay", 0.01)),
     )
+    total_steps = _resolve_total_steps(cfg, len(train_ds))
+    effective_batch = int(cfg["train"].get("batch_size", 4)) * int(cfg["train"].get("gradient_accumulation_steps", 1))
+    logger.info(
+        "Training schedule: train_examples=%d effective_batch=%d total_steps=%d",
+        len(train_ds),
+        effective_batch,
+        total_steps,
+    )
     scheduler = None
     scheduler_name = cfg["train"].get("scheduler", "none")
     if scheduler_name == "cosine":
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, int(cfg["train"].get("max_steps", 100))))
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(1, total_steps))
     elif scheduler_name == "linear":
-        scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=float(cfg["train"].get("end_lr_factor", 0.1)), total_iters=max(1, int(cfg["train"].get("max_steps", 100))))
+        scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=float(cfg["train"].get("end_lr_factor", 0.1)), total_iters=max(1, total_steps))
     amp_enabled = bool(cfg["train"].get("amp", True)) and device.type == "cuda"
     scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
     run_id = os.environ.get("RUN_ID")
     wandb_run_name = cfg.get("wandb", {}).get("run_name") or (f"{run_id}-{stage}" if run_id else stage)
     wandb = WandbLogger({"enabled": cfg.get("wandb", {}).get("enabled", False), **cfg.get("wandb", {}), "config": cfg}, run_name=wandb_run_name)
 
-    total_steps = int(cfg["train"].get("max_steps", 100))
     grad_accum = int(cfg["train"].get("gradient_accumulation_steps", 1))
     log_every = max(1, int(cfg["train"].get("log_every", 10)))
     eval_every = int(cfg["train"].get("eval_every", 50))
     eval_enabled = eval_every > 0
+    eval_max_batches = _optional_positive_int(cfg["train"].get("eval_max_batches"))
     ckpt_every = int(cfg["train"].get("checkpoint_every", 100))
     ckpt_enabled = ckpt_every > 0
     max_grad_norm = float(cfg["train"].get("max_grad_norm", 1.0))
@@ -299,7 +339,7 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
                     avg.reset()
 
                 if eval_enabled and val_loader is not None and step % eval_every == 0:
-                    metrics = evaluate_model(model, val_loader, device, prefix=f"{stage}/val/", hidden_topology_cfg=hidden_topology_cfg)
+                    metrics = evaluate_model(model, val_loader, device, prefix=f"{stage}/val/", max_batches=eval_max_batches, hidden_topology_cfg=hidden_topology_cfg)
                     wandb.log(metrics, step)
                     with metrics_file.open("a", encoding="utf-8") as f:
                         f.write(json.dumps({"step": step, **metrics}, sort_keys=True) + "\n")
