@@ -133,6 +133,7 @@ FULL_TRAIN_EPOCHS=2.0 scripts/run_full_phase1_phase2_training.sh
 FULL_TRAIN_EVAL_MAX_BATCHES=full scripts/run_full_phase1_phase2_training.sh
 FULL_TRAIN_NUM_WORKERS=12 FULL_TRAIN_PREFETCH_FACTOR=6 scripts/run_full_phase1_phase2_training.sh
 FULL_TRAIN_BATCH_SIZE=6 FULL_TRAIN_GRAD_ACCUM=6 ./scripts/run_full_phase1_phase2_training_250m.sh
+FULL_TRAIN_SKIP_POLICY_CHECK=1 ./scripts/run_full_phase1_phase2_training_250m.sh
 ./scripts/train_full_selected_250m_direct.sh
 FULL_TRAIN_MAX_STEPS=20 ./scripts/train_full_selected_250m_direct.sh
 MODEL_CONFIG=config/model/ugm_250m_tokengt.yaml scripts/run_full_phase1_phase2_training.sh
