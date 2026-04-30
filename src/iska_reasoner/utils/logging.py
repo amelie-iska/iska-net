@@ -53,8 +53,8 @@ class WandbLogger:
                 import wandb
 
                 mode = os.environ.get("WANDB_MODE", cfg.get("mode", "online"))
-                env_tags = [tag for tag in os.environ.get("WANDB_TAGS", "").split(",") if tag]
-                cfg_tags = cfg.get("tags") or []
+                env_tags = _string_tags(os.environ.get("WANDB_TAGS", "").split(","))
+                cfg_tags = _string_tags(cfg.get("tags") or [])
                 self._run = wandb.init(
                     project=os.environ.get("WANDB_PROJECT", cfg.get("project", "iska-ugm")),
                     entity=os.environ.get("WANDB_ENTITY") or cfg.get("entity"),
@@ -82,3 +82,16 @@ class WandbLogger:
             import wandb
 
             wandb.finish()
+
+
+def _string_tags(tags: Any) -> list[str]:
+    if isinstance(tags, str):
+        tags = [tags]
+    out: list[str] = []
+    for tag in tags or []:
+        if tag is None:
+            continue
+        text = str(tag).strip()
+        if text:
+            out.append(text)
+    return out

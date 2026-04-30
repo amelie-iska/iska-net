@@ -5,5 +5,5 @@ wandb:
   tags:
     - random-order
     - tokengt
-    - 4090
+    - "4090"
   group: production
