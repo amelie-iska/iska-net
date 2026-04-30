@@ -98,6 +98,22 @@ def _optional_positive_int(value: Any) -> int | None:
     return parsed or None
 
 
+def _scalar_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    if torch.is_tensor(value):
+        if value.numel() != 1:
+            return None
+        try:
+            return float(value.detach().float().cpu().item())
+        except (RuntimeError, ValueError, TypeError):
+            return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
+
+
 def run_training_stage(cfg: dict[str, Any]) -> None:
     stage = cfg["stage"]["name"]
     if cfg.get("run", {}).get("train_disabled"):
@@ -307,6 +323,23 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
                         max_points=hidden_topology_max_points,
                     )
                     full_loss = full_loss + hidden_js_weight * hidden_js_loss
+                if not bool(torch.isfinite(full_loss.detach()).all().item()):
+                    emergency_path = Path(output_dir) / f"checkpoint_nonfinite_step_{step}_micro_{micro_step}.pt"
+                    save_checkpoint(emergency_path, model, optimizer, step, cfg)
+                    example_ids = batch.get("example_ids", [])[:8]
+                    diagnostics = {
+                        "loss": _scalar_or_none(out.get("loss")),
+                        "total_loss": _scalar_or_none(full_loss),
+                        "topology_loss": _scalar_or_none(out.get("topology_loss")),
+                        "numeric_diffusion_loss": _scalar_or_none(out.get("numeric_diffusion_loss")),
+                        "hidden_topology/collapse_loss": _scalar_or_none(hidden_collapse),
+                        "hidden_topology/js_geometry_loss": _scalar_or_none(hidden_js_loss),
+                    }
+                    raise FloatingPointError(
+                        "Non-finite training loss detected "
+                        f"stage={stage} step={step} micro_step={micro_step} "
+                        f"example_ids={example_ids} checkpoint={emergency_path} diagnostics={diagnostics}"
+                    )
                 loss = full_loss / grad_accum
             scaler.scale(loss).backward()
             micro_step += 1

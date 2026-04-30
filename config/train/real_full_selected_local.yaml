@@ -25,8 +25,8 @@ train:
   eval_max_batches: 512
   checkpoint_every: 5000
 loss:
-  topology_weight: 0.05
-  numeric_diffusion_weight: 0.1
+  topology_weight: 0.0
+  numeric_diffusion_weight: 0.0
 tropical:
   enabled: true
   temperature: 1.0

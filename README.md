@@ -132,6 +132,7 @@ UMA_SCORE_SMOKE=1 scripts/run_full_phase1_phase2_training.sh
 FULL_TRAIN_EPOCHS=2.0 scripts/run_full_phase1_phase2_training.sh
 FULL_TRAIN_EVAL_MAX_BATCHES=full scripts/run_full_phase1_phase2_training.sh
 FULL_TRAIN_NUM_WORKERS=12 FULL_TRAIN_PREFETCH_FACTOR=6 scripts/run_full_phase1_phase2_training.sh
+FULL_TRAIN_BATCH_SIZE=7 FULL_TRAIN_GRAD_ACCUM=5 ./scripts/run_full_phase1_phase2_training_250m.sh
 MODEL_CONFIG=config/model/ugm_250m_tokengt.yaml scripts/run_full_phase1_phase2_training.sh
 TRAINING_FIRST=0 SKIP_INTERPRO_MOTIF_DOWNLOAD=0 scripts/run_full_phase1_phase2_training.sh
 ```
@@ -208,9 +209,9 @@ conda run -n tokengt python scripts/train_stage.py \
   --config config/train/real_full_selected_local.yaml
 ```
 
-`config/train/real_full_selected_local.yaml` sets `max_steps: full_epoch` and `full_epochs: 1.0`. For the current corpus this resolves to about 224k optimizer steps with `batch_size: 1` and `gradient_accumulation_steps: 32`, i.e. one pass over all 7,181,690 train examples. In-training validation is intentionally capped with `eval_max_batches: 512`; the stage still runs full validation and test after training through `scripts/validate_stage.py`. The full runner defaults to eight train DataLoader workers, pinned memory, persistent workers, and prefetching because the full corpus is an 83GB JSONL file and CPU graph parsing can otherwise leave the GPU underfed.
+`config/train/real_full_selected_local.yaml` sets `max_steps: full_epoch` and `full_epochs: 1.0`. For the current corpus this resolves to about 224k optimizer steps with `batch_size: 1` and `gradient_accumulation_steps: 32`, i.e. one pass over all 7,181,690 train examples. In-training validation is intentionally capped with `eval_max_batches: 512`; the stage still runs full validation and test after training through `scripts/validate_stage.py`. The full runner defaults to eight train DataLoader workers, pinned memory, persistent workers, and prefetching because the full corpus is an 83GB JSONL file and CPU graph parsing can otherwise leave the GPU underfed. Phase-1 full-corpus training backpropagates the token objective only; topology and numeric-diffusion values remain logged as diagnostics, while weighted topology/numeric auxiliary losses are reserved for later normalized ablation stages. The trainer fails fast and writes an emergency checkpoint if any loss becomes non-finite.
 
-The 250M setup uses `config/model/ugm_250m_tokengt.yaml`, `config/data/real_full_selected_mix_250m.yaml`, `config/train/real_full_selected_250m_local.yaml`, `config/validate/real_full_selected_250m_validation.yaml`, `config/validate/real_full_selected_250m_test.yaml`, and `config/inference/real_full_selected_250m_inference.yaml`. Its artifacts live under `outputs/real_full_selected_250m_local/` so it can be trained beside the default 576M run. The 250M training config raises the physical batch to `batch_size: 2` and lowers accumulation to `gradient_accumulation_steps: 16`, preserving the same effective batch of 32 examples while reducing microsteps per optimizer update.
+The 250M setup uses `config/model/ugm_250m_tokengt.yaml`, `config/data/real_full_selected_mix_250m.yaml`, `config/train/real_full_selected_250m_local.yaml`, `config/validate/real_full_selected_250m_validation.yaml`, `config/validate/real_full_selected_250m_test.yaml`, and `config/inference/real_full_selected_250m_inference.yaml`. Its artifacts live under `outputs/real_full_selected_250m_local/` so it can be trained beside the default 576M run. A CUDA probe at the actual full-run length of 926 graph tokens found `batch_size: 7` fits with AdamW state allocated and `batch_size: 8` OOMs, so the 250M training config uses `batch_size: 7`, `eval_batch_size: 7`, and `gradient_accumulation_steps: 5`.
 
 ### Sequence-First Multimodal And FairChem/UMA Oracle Conditioning
 
