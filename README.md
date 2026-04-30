@@ -4,7 +4,7 @@
 
 This repo is a training scaffold for a **Universal Graph Model (UGM)**: a TokenGT-style graph-to-graph model type for language, reasoning, tools, SELFIES/SMILES molecules, proteins, DNA/RNA, graph-state reasoning, and temperature-conditioned UMA-oracle feedback.
 
-The implemented path is intentionally practical for one RTX 4090: graph-rich examples, a compact TokenGT-style transformer, random-order graph-token decoding, staged training, validation, inference, and a local GFlowNet trajectory-balance stage.
+The implemented path is intentionally practical for one RTX 4090: graph-rich examples, a compact TokenGT-style transformer, random-order autoregressive graph-token decoding, staged training, validation, inference, and a local GFlowNet trajectory-balance stage.
 
 ## What Is Implemented
 
