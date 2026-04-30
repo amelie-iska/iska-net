@@ -38,6 +38,13 @@ def _tensor_batch(batch: dict[str, Any], device: torch.device) -> dict[str, Any]
 def _check_dataset_policy(dataset: GraphJsonlDataset, cfg: dict[str, Any], split: str, logger: Any) -> None:
     sequence_only = bool(cfg["data"].get("enforce_sequence_only_molecules", False))
     forbid_structure_files = bool(cfg["data"].get("forbid_actual_structure_files", True))
+    if bool(cfg["data"].get("skip_policy_check", False)):
+        logger.warning(
+            "Skipping dataset policy check for %s split because data.skip_policy_check=true. "
+            "Use this only after the same corpus has already passed the full sequence-only policy scan.",
+            split,
+        )
+        return
     if not sequence_only and not forbid_structure_files:
         return
     max_rows = cfg["data"].get("policy_check_max_rows")

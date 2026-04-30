@@ -5,8 +5,8 @@ run:
   output_dir: outputs/real_full_selected_250m_local
   device: cuda
 train:
-  batch_size: 7
-  eval_batch_size: 7
+  batch_size: 6
+  eval_batch_size: 6
   num_workers: 8
   eval_num_workers: 2
   pin_memory: true
@@ -14,7 +14,7 @@ train:
   prefetch_factor: 4
   max_steps: full_epoch
   full_epochs: 1.0
-  gradient_accumulation_steps: 5
+  gradient_accumulation_steps: 6
   learning_rate: 0.0002
   weight_decay: 0.01
   scheduler: cosine
