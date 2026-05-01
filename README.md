@@ -2,7 +2,9 @@
 
 <img src="./assets/SGRM-UGM-1.png" alt="SGRM-UGM" width="900">
 
-This repo is a training scaffold for a **Universal Graph Model (UGM)**: a TokenGT-style graph-to-graph model type for language, reasoning, tools, SELFIES/SMILES molecules, proteins, DNA/RNA, graph-state reasoning, and temperature-conditioned UMA-oracle feedback.
+[![Paper PDF](https://img.shields.io/badge/arXiv--style-Paper%20PDF-1f6feb?style=for-the-badge&logo=arxiv&logoColor=white)](./assets/human_learning_transformer_learning_review_dataset_expanded.pdf)
+
+This repo is a training scaffold for a **Universal Graph Model (UGM)**: a TokenGT-style graph-to-graph model type for language, reasoning, tools, SELFIES/SMILES molecules, proteins, DNA/RNA, graph-state reasoning, temperature-conditioned UMA-oracle feedback, GFlowNet training, graph/tree/chain-of-thought supervision, continuous latent reasoning, and persistent-topology/tropical-geometry diagnostics.
 
 The implemented path is intentionally practical for one RTX 4090: graph-rich examples, a compact TokenGT-style transformer, random-order autoregressive graph-token decoding, staged training, validation, inference, and a local GFlowNet trajectory-balance stage.
 
