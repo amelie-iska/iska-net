@@ -22,6 +22,12 @@ train:
   checkpoint_every: 500
 loss:
   topology_weight: 0.05
+  coordinate_loss_weight: 0.1
+model:
+  coordinate_head_enabled: true
+  coordinate_target_scale: 10.0
+  coordinate_logvar_min: -8.0
+  coordinate_logvar_max: 4.0
 tropical:
   enabled: true
   temperature: 1.0

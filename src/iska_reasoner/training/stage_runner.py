@@ -219,12 +219,13 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
     model_cfg["vocab_size"] = len(vocab.token_to_id)
     model = RandomOrderTokenGT(RandomOrderTokenGTConfig(**model_cfg))
     logger.info(
-        "Model attention backend: %s tropical_projection=%s tropical_norm_shift=%s tropical_projective_normalize=%s tropical_query_chunk_size=%s",
+        "Model attention backend: %s tropical_projection=%s tropical_norm_shift=%s tropical_projective_normalize=%s tropical_query_chunk_size=%s coordinate_head=%s",
         model.cfg.attention_backend,
         model.cfg.tropical_use_projection,
         model.cfg.tropical_use_norm_shift,
         model.cfg.tropical_projective_normalize,
         model.cfg.tropical_query_chunk_size,
+        model.cfg.coordinate_head_enabled,
     )
     device = get_device(cfg["run"].get("device", "cuda"))
     model.to(device)
@@ -271,6 +272,9 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
     ckpt_enabled = ckpt_every > 0
     max_grad_norm = float(cfg["train"].get("max_grad_norm", 1.0))
     topo_weight = float(cfg.get("loss", {}).get("topology_weight", 0.0))
+    coordinate_loss_weight = float(cfg.get("loss", {}).get("coordinate_loss_weight", 0.0))
+    if coordinate_loss_weight > 0 and not bool(model.cfg.coordinate_head_enabled):
+        raise ValueError("loss.coordinate_loss_weight > 0 requires model.coordinate_head_enabled=true")
     hidden_topology_cfg = cfg.get("hidden_topology", {})
     hidden_topology_enabled = bool(hidden_topology_cfg.get("enabled", False))
     hidden_topology_every = max(1, int(hidden_topology_cfg.get("log_every", log_every)))
@@ -309,7 +313,7 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
         for batch in train_loader:
             batch = _tensor_batch(batch, device)
             with torch.amp.autocast(device_type=device.type, enabled=scaler.is_enabled()):
-                out = model(**{k: batch[k] for k in [
+                model_inputs = {k: batch[k] for k in [
                     "input_ids",
                     "kind_ids",
                     "slot_ids",
@@ -319,10 +323,16 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
                     "attention_mask",
                     "causal_mask",
                     "labels",
-                ]}, topology_targets=batch.get("topology_features"))
+                    "coordinate_targets",
+                    "coordinate_mask",
+                ] if k in batch}
+                out = model(**model_inputs, topology_targets=batch.get("topology_features"))
                 full_loss = out["loss"]
                 if topo_weight > 0 and "topology_loss" in out:
                     full_loss = full_loss + topo_weight * out["topology_loss"]
+                coordinate_loss = out.get("coordinate_loss", torch.tensor(0.0, device=device))
+                if coordinate_loss_weight > 0:
+                    full_loss = full_loss + coordinate_loss_weight * coordinate_loss
                 hidden_collapse = torch.tensor(0.0, device=device)
                 hidden_js_loss = torch.tensor(0.0, device=device)
                 uma_contact_loss = torch.tensor(0.0, device=device)
@@ -369,6 +379,7 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
                         "loss": _scalar_or_none(out.get("loss")),
                         "total_loss": _scalar_or_none(full_loss),
                         "topology_loss": _scalar_or_none(out.get("topology_loss")),
+                        "coordinate_loss": _scalar_or_none(coordinate_loss),
                         "hidden_topology/collapse_loss": _scalar_or_none(hidden_collapse),
                         "hidden_topology/js_geometry_loss": _scalar_or_none(hidden_js_loss),
                         "uma_contact/alignment_loss": _scalar_or_none(uma_contact_loss),
@@ -387,6 +398,10 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
                 "token_accuracy": out["token_accuracy"].item(),
                 "total_loss": full_loss.item(),
                 "topology_loss": out.get("topology_loss", torch.tensor(0.0, device=device)).item(),
+                "coordinate/loss": coordinate_loss.item(),
+                "coordinate/rmse": out.get("coordinate_rmse", torch.tensor(0.0, device=device)).item(),
+                "coordinate/supervised_axes": out.get("coordinate_supervised_axes", torch.tensor(0.0, device=device)).item(),
+                "coordinate/mean_sigma": out.get("coordinate_mean_sigma", torch.tensor(0.0, device=device)).item(),
                 "hidden_topology/collapse_loss": hidden_collapse.item(),
                 "hidden_topology/js_geometry_loss": hidden_js_loss.item(),
                 "uma_contact/alignment_loss": uma_contact_loss.item(),
@@ -433,6 +448,8 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
                 step += 1
                 pbar.update(1)
                 postfix = {"loss": f"{out['loss'].item():.4f}", "acc": f"{out['token_accuracy'].item():.3f}"}
+                if coordinate_loss_weight > 0 and float(metrics.get("coordinate/supervised_axes", 0.0)) > 0.0:
+                    postfix["coord"] = f"{metrics['coordinate/rmse']:.3f}"
                 if "tropical_attention/top1_margin" in metrics:
                     postfix["trop_margin"] = f"{metrics['tropical_attention/top1_margin']:.3f}"
                 pbar.set_postfix(**postfix)

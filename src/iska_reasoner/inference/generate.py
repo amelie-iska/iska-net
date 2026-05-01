@@ -54,6 +54,7 @@ def complete_graph_tokens(
             target_tokens=generated + ["<UNK>"],
             metadata=example.metadata,
             decoder_orders=[list(range(len(generated) + 1))],
+            coordinate_targets=example.coordinate_targets,
         )
         encoded = encode_example(tmp, vocab, list(range(len(generated) + 1)), max_source_tokens, max_steps)
         collator = RandomOrderCollator(vocab=vocab, max_source_tokens=max_source_tokens, max_target_tokens=max_steps, max_seq_len=model.cfg.max_seq_len, order_mode="first")
@@ -81,3 +82,81 @@ def complete_graph_tokens(
             break
         generated.append(token)
     return generated
+
+
+@torch.no_grad()
+def predict_coordinate_records(
+    model: RandomOrderTokenGT,
+    vocab: GraphVocab,
+    example: GraphExample,
+    device: torch.device,
+    target_tokens: list[str] | None = None,
+    max_source_tokens: int = 128,
+    max_target_tokens: int = 64,
+) -> list[dict[str, Any]]:
+    """Predict continuous coordinate means for already chosen COORD records.
+
+    This helper does not choose the symbolic records. It reads an existing
+    graph-token candidate, runs the same `<POS>` slots through the model, and
+    returns the optional continuous coordinate head predictions for coordinate
+    records. The ordinary autoregressive decoder therefore remains responsible
+    for deciding whether a coordinate record exists and which frame/atom/axis it
+    names.
+    """
+    if not bool(model.cfg.coordinate_head_enabled):
+        return []
+    tokens = list(target_tokens if target_tokens is not None else example.target_tokens)
+    if not tokens:
+        return []
+    tmp = GraphExample(
+        id=example.id,
+        task=example.task,
+        nodes=example.nodes,
+        edges=example.edges,
+        target_tokens=tokens,
+        metadata=example.metadata,
+        decoder_orders=[list(range(len(tokens)))],
+        coordinate_targets=example.coordinate_targets,
+    )
+    collator = RandomOrderCollator(
+        vocab=vocab,
+        max_source_tokens=max_source_tokens,
+        max_target_tokens=max_target_tokens,
+        max_seq_len=model.cfg.max_seq_len,
+        order_mode="first",
+    )
+    batch = collator([tmp])
+    batch = {key: value.to(device) if torch.is_tensor(value) else value for key, value in batch.items()}
+    out = model(**{k: batch[k] for k in [
+        "input_ids",
+        "kind_ids",
+        "slot_ids",
+        "endpoint_ids",
+        "identifier_ids",
+        "source_numeric_features",
+        "attention_mask",
+        "causal_mask",
+    ]})
+    mean = out.get("coordinate_mean")
+    logvar = out.get("coordinate_logvar")
+    if mean is None or logvar is None:
+        return []
+    pos_indices = torch.where(batch["kind_ids"][0].eq(4) & batch["attention_mask"][0])[0]
+    results: list[dict[str, Any]] = []
+    for pos_idx, token in zip(pos_indices.tolist(), tokens[: len(pos_indices)], strict=False):
+        if not token.startswith("COORD:"):
+            continue
+        xyz = mean[0, pos_idx].detach().cpu().tolist()
+        sigma = torch.exp(0.5 * logvar[0, pos_idx]).mul(max(float(model.cfg.coordinate_target_scale), 1e-6)).detach().cpu().tolist()
+        results.append(
+            {
+                "token": token,
+                "x": float(xyz[0]),
+                "y": float(xyz[1]),
+                "z": float(xyz[2]),
+                "sigma_x": float(sigma[0]),
+                "sigma_y": float(sigma[1]),
+                "sigma_z": float(sigma[2]),
+            }
+        )
+    return results

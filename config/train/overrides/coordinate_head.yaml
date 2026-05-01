@@ -1,0 +1,7 @@
+model:
+  coordinate_head_enabled: true
+  coordinate_target_scale: 10.0
+  coordinate_logvar_min: -8.0
+  coordinate_logvar_max: 4.0
+loss:
+  coordinate_loss_weight: 0.1

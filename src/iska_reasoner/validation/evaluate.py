@@ -40,10 +40,17 @@ def evaluate_model(
             "attention_mask",
             "causal_mask",
             "labels",
-        ]}, topology_targets=tensor_batch.get("topology_features"))
+            "coordinate_targets",
+            "coordinate_mask",
+        ] if k in tensor_batch}, topology_targets=tensor_batch.get("topology_features"))
         metrics = {"loss": out["loss"].item(), "token_accuracy": out["token_accuracy"].item()}
         if "topology_loss" in out:
             metrics["topology_loss"] = out["topology_loss"].item()
+        if "coordinate_loss" in out:
+            metrics["coordinate/loss"] = out["coordinate_loss"].item()
+            metrics["coordinate/rmse"] = out.get("coordinate_rmse", torch.tensor(0.0, device=device)).item()
+            metrics["coordinate/supervised_axes"] = out.get("coordinate_supervised_axes", torch.tensor(0.0, device=device)).item()
+            metrics["coordinate/mean_sigma"] = out.get("coordinate_mean_sigma", torch.tensor(0.0, device=device)).item()
         for key, value in out.get("attention_metrics", {}).items():
             metrics[key] = value.item() if torch.is_tensor(value) else value
         metrics.update(logit_diagnostics(out["logits"], tensor_batch["labels"]))

@@ -110,7 +110,7 @@ Implementation decisions:
 - Add `scripts/build_multimodal_vocab.py` and `scripts/prepare_multimodal_sources.py`.
 - Add phase-2 configs for multimodal SFT and oracle-feedback GFlowNet training.
 - Add multimodal verifier metrics and a real FairChem/UMA oracle adapter for candidate scoring. The deterministic proxy path remains only for unit tests and smoke runs via `UGM_UMA_BACKEND=proxy`; direct structure-file supervision remains blocked in the first run.
-- Keep the core TokenGT-style model unchanged. Geometry is represented through graph records, numeric targets, and losses rather than a special coordinate head.
+- Keep the core TokenGT-style graph decoder unchanged. Geometry is represented first through autoregressive graph records; an optional masked continuous coordinate head is available only for later explicitly approved structure phases and is off in the first sequence-only run.
 
 ## Environment
 

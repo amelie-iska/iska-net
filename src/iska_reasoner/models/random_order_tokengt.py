@@ -54,6 +54,10 @@ class RandomOrderTokenGTConfig:
     hybrid_tropical_include_last: bool = False
     emit_attention_contact_maps: bool = False
     attention_contact_maps_detach: bool = True
+    coordinate_head_enabled: bool = False
+    coordinate_target_scale: float = 10.0
+    coordinate_logvar_min: float = -8.0
+    coordinate_logvar_max: float = 4.0
 
 
 class LoRALinear(nn.Module):
@@ -200,6 +204,15 @@ class RandomOrderTokenGT(nn.Module):
             nn.LayerNorm(cfg.hidden_dim),
             nn.Linear(cfg.hidden_dim, cfg.topology_dim),
         )
+        self.coordinate_head = None
+        if cfg.coordinate_head_enabled:
+            self.coordinate_head = nn.Sequential(
+                nn.LayerNorm(cfg.hidden_dim),
+                nn.Linear(cfg.hidden_dim, cfg.hidden_dim),
+                nn.GELU(),
+                nn.Dropout(cfg.dropout),
+                nn.Linear(cfg.hidden_dim, 6),
+            )
         self.lm_head.weight = self.token_embed.weight
         if cfg.lora_rank > 0:
             try:
@@ -307,6 +320,35 @@ class RandomOrderTokenGT(nn.Module):
         self._finalize_checkpointed_encoder_cache(hidden, buckets, contact_maps)
         return hidden
 
+    def _coordinate_distribution_loss(
+        self,
+        coordinate_params: torch.Tensor,
+        coordinate_targets: torch.Tensor,
+        coordinate_mask: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        scale = max(float(self.cfg.coordinate_target_scale), 1e-6)
+        targets = coordinate_targets.to(device=coordinate_params.device, dtype=coordinate_params.dtype) / scale
+        mask = coordinate_mask.to(device=coordinate_params.device, dtype=coordinate_params.dtype)
+        mean = coordinate_params[..., :3]
+        logvar = coordinate_params[..., 3:].clamp(
+            min=float(self.cfg.coordinate_logvar_min),
+            max=float(self.cfg.coordinate_logvar_max),
+        )
+        inv_var = torch.exp(-logvar)
+        squared = (mean - targets).pow(2)
+        nll = 0.5 * (logvar + squared * inv_var)
+        denom = mask.sum().clamp_min(1.0)
+        loss = (nll * mask).sum() / denom
+        mean_raw = mean * scale
+        rmse = torch.sqrt((((mean_raw - coordinate_targets.to(mean_raw.dtype)) ** 2) * mask).sum() / denom + 1e-12)
+        sigma_raw = torch.exp(0.5 * logvar).mul(scale)
+        return {
+            "coordinate_loss": loss,
+            "coordinate_rmse": rmse,
+            "coordinate_supervised_axes": mask.sum().detach(),
+            "coordinate_mean_sigma": ((sigma_raw * mask).sum() / denom).detach(),
+        }
+
     def forward(
         self,
         input_ids: torch.Tensor,
@@ -319,6 +361,8 @@ class RandomOrderTokenGT(nn.Module):
         causal_mask: torch.Tensor | None = None,
         labels: torch.Tensor | None = None,
         topology_targets: torch.Tensor | None = None,
+        coordinate_targets: torch.Tensor | None = None,
+        coordinate_mask: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         bsz, seq_len = input_ids.shape
         device = input_ids.device
@@ -354,6 +398,22 @@ class RandomOrderTokenGT(nn.Module):
         values = self.value_head(hidden).squeeze(-1)
         topology_pred = self.topology_head(hidden[:, 0])
         output = {"logits": logits, "hidden_states": hidden, "values": values, "topology_pred": topology_pred}
+        if self.coordinate_head is not None:
+            coordinate_params = self.coordinate_head(hidden)
+            output["coordinate_params"] = coordinate_params
+            output["coordinate_mean"] = coordinate_params[..., :3] * max(float(self.cfg.coordinate_target_scale), 1e-6)
+            output["coordinate_logvar"] = coordinate_params[..., 3:].clamp(
+                min=float(self.cfg.coordinate_logvar_min),
+                max=float(self.cfg.coordinate_logvar_max),
+            )
+            if coordinate_targets is not None and coordinate_mask is not None:
+                output.update(
+                    self._coordinate_distribution_loss(
+                        coordinate_params,
+                        coordinate_targets=coordinate_targets,
+                        coordinate_mask=coordinate_mask,
+                    )
+                )
         attention_metrics = getattr(self.encoder, "last_attention_metrics", None)
         if attention_metrics:
             output["attention_metrics"] = attention_metrics

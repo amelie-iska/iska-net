@@ -29,6 +29,7 @@ class GraphExample:
     target_tokens: list[str]
     metadata: dict[str, Any] = field(default_factory=dict)
     decoder_orders: list[list[int]] = field(default_factory=list)
+    coordinate_targets: list[dict[str, Any]] = field(default_factory=list)
 
     def validate(self) -> None:
         node_ids = {node.id for node in self.nodes}
@@ -51,6 +52,7 @@ class GraphExample:
             "target_tokens": self.target_tokens,
             "decoder_orders": self.decoder_orders,
             "metadata": self.metadata,
+            "coordinate_targets": self.coordinate_targets,
         }
 
     @classmethod
@@ -63,6 +65,7 @@ class GraphExample:
             target_tokens=[str(tok) for tok in row.get("target_tokens", [])],
             decoder_orders=[[int(i) for i in order] for order in row.get("decoder_orders", [])],
             metadata=dict(row.get("metadata", {})),
+            coordinate_targets=[dict(item) for item in row.get("coordinate_targets", [])],
         )
         ex.validate()
         return ex

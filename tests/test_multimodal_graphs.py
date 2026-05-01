@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from iska_reasoner.data.dataset import RandomOrderCollator, extract_numeric_values
+import torch
+
+from iska_reasoner.data.dataset import RandomOrderCollator, coordinate_targets_by_index, extract_numeric_values
 from iska_reasoner.data.graphify import graphify_rows
 from iska_reasoner.data.multimodal import (
     BOND_TYPES,
@@ -19,6 +21,7 @@ from iska_reasoner.data.motifs import (
 )
 from iska_reasoner.data.vocab import build_vocab
 from iska_reasoner.graph.orders import build_orders, oracle_enabling_order, scientific_graph_order
+from iska_reasoner.models.random_order_tokengt import RandomOrderTokenGT, RandomOrderTokenGTConfig
 from iska_reasoner.tools import multimodal_metrics_for_example, multimodal_oracle_reward, verify_example_tokens
 
 
@@ -238,6 +241,71 @@ def test_multimodal_dispatch_and_collator_build():
     assert batch["input_ids"].shape[0] == 1
     assert batch["numeric_mask"].sum().item() >= 3
     assert batch["source_numeric_features"].sum().item() > 0
+    assert batch["coordinate_targets"].shape[-1] == 3
+    assert batch["coordinate_mask"].sum().item() >= 3
+
+
+def test_coordinate_targets_align_with_coord_tokens():
+    ex = graphify_multimodal(_row(), 0, "local_multimodal_graph_to_graph", molecular_input_policy=ALLOW_STRUCTURE)
+    targets, mask = coordinate_targets_by_index(ex)
+    coord_idx = ex.target_tokens.index("COORD:f0:a1:x:pos_near")
+    assert targets[coord_idx] == [1.25, 0.0, 0.0]
+    assert mask[coord_idx] == [1.0, 0.0, 0.0]
+    y_idx = ex.target_tokens.index("COORD:f0:a1:y:zero")
+    assert targets[y_idx] == [1.25, 0.0, 0.0]
+    assert mask[y_idx] == [0.0, 1.0, 0.0]
+
+
+def test_coordinate_head_forward_backward_on_structure_batch():
+    ex = graphify_multimodal(_row(), 0, "local_multimodal_graph_to_graph", molecular_input_policy=ALLOW_STRUCTURE)
+    vocab = build_vocab([ex], extra_tokens=multimodal_reference_tokens())
+    collator = RandomOrderCollator(
+        vocab,
+        max_source_tokens=24,
+        max_target_tokens=128,
+        max_seq_len=256,
+        max_numeric_targets=8,
+        order_mode="first",
+    )
+    batch = collator([ex])
+    cfg = RandomOrderTokenGTConfig(
+        vocab_size=len(vocab.token_to_id),
+        hidden_dim=48,
+        num_layers=1,
+        num_heads=4,
+        ffn_dim=96,
+        max_seq_len=256,
+        max_nodes=128,
+        max_slots=64,
+        endpoint_dim=16,
+        identifier_dim=16,
+        coordinate_head_enabled=True,
+        coordinate_target_scale=10.0,
+    )
+    model = RandomOrderTokenGT(cfg)
+    out = model(
+        input_ids=batch["input_ids"],
+        kind_ids=batch["kind_ids"],
+        slot_ids=batch["slot_ids"],
+        endpoint_ids=batch["endpoint_ids"],
+        identifier_ids=batch["identifier_ids"],
+        source_numeric_features=batch["source_numeric_features"],
+        attention_mask=batch["attention_mask"],
+        causal_mask=batch["causal_mask"],
+        labels=batch["labels"],
+        coordinate_targets=batch["coordinate_targets"],
+        coordinate_mask=batch["coordinate_mask"],
+    )
+    assert out["coordinate_supervised_axes"].item() >= 3
+    assert torch.isfinite(out["coordinate_loss"])
+    total = out["loss"] + 0.1 * out["coordinate_loss"]
+    total.backward()
+    grad_norm = sum(
+        param.grad.detach().abs().sum().item()
+        for name, param in model.named_parameters()
+        if name.startswith("coordinate_head") and param.grad is not None
+    )
+    assert grad_norm > 0.0
 
 
 def test_multimodal_random_orders_include_scientific_and_oracle_priorities():

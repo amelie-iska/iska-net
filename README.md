@@ -41,7 +41,7 @@ The implemented path is intentionally practical for one RTX 4090: graph-rich exa
 - Domain vertical slices for code/unit tests, Lean availability/compile checks, and RDKit-backed molecule graphs when RDKit is installed.
 - PLAN-D/PLAN-G science-data slices for SFM/NatureLM reference vocabulary and UniGenX-style molecule/material graphs.
 - PLAN-E Hebrew morphology/root slices with UD Hebrew HTB, Hebrew QA, Nakdimon diacritization, root-template graphs, and root-extension GFlowNet training.
-- PLAN-F/PLAN-G deferred-component closure: optional advanced topology backends, tropical attention/parser utilities, autoregressive coordinate/property graph tokens, audio feature extraction, local SFM/NatureLM and UniGenX science-source preparation, bioactivity/docking/protein graphification, safer verifier execution, stronger curation, and context-aware learned-backward GFlowNets.
+- PLAN-F/PLAN-G deferred-component closure: optional advanced topology backends, tropical attention/parser utilities, autoregressive coordinate/property graph tokens plus a gated continuous coordinate head for future structure phases, audio feature extraction, local SFM/NatureLM and UniGenX science-source preparation, bioactivity/docking/protein graphification, safer verifier execution, stronger curation, and context-aware learned-backward GFlowNets.
 - PLAN-H UGM multimodal graph-to-graph phase: sequence-first vocabulary for text/protein/SELFIES/SMILES/DNA/RNA/tool/oracle records, local-source preparation, continuous temperature conditioning, UMA-conditioned coupling/motion bins, function-description alignment, and oracle-feedback GFlowNet rewards.
 - Full motif vocabulary path for sequence-first multimodal training: PROSITE, InterPro, Rfam, core sequence motifs, safe `SEQ_MOTIF_FROM_STRUCTURE:*` vocabulary entries, and optional non-structure molecule descriptors are parsed into graph-record vocabulary tokens; row-local structure motifs from coordinates/contact labels are evaluation/future-phase only.
 - Structure/dynamics sources are validation-only by default. Actual PDB/mmCIF/SDF/trajectory, coordinate, energy, and force training remains disabled unless a later explicit phase enables it.
@@ -730,7 +730,17 @@ conda run -n tokengt python scripts/train_stage.py \
   --config config/train/science_sft_tiny.yaml
 ```
 
-UGM uses a single autoregressive graph-token decoder for symbolic and structure-candidate records. Structure positions are not produced by a parallel coordinate head: generated frame coordinates are discretized into identity-bearing target records such as `COORD:f0:a17:x:pos_near`, so frame, atom slot, axis, and coordinate bin are all predicted through the same random-order `<POS>` objective as text, SELFIES, proof, tool, and oracle records. Direct coordinate, dynamics, energy, and force labels from structure files remain disabled for the first run.
+UGM uses a single autoregressive graph-token decoder for symbolic and structure-candidate records. Generated frame coordinates are first discretized into identity-bearing target records such as `COORD:f0:a17:x:pos_near`, so frame, atom slot, axis, and coordinate bin are predicted through the same random-order `<POS>` objective as text, SELFIES, proof, tool, and oracle records. The implementation also includes an optional continuous coordinate head for a later explicit structure phase: when `model.coordinate_head_enabled=true`, every coordinate-bearing `<POS>` slot can predict a Gaussian mean and variance for `(x,y,z)`, and `loss.coordinate_loss_weight` adds the masked coordinate NLL only where coordinate targets are present. This head refines an already named graph coordinate record; it does not replace autoregressive graph decoding and it is off for the first sequence-only full run. Direct coordinate, dynamics, energy, and force labels from structure files remain disabled until a structure-file phase is explicitly approved.
+
+Coordinate-head structure-phase override:
+
+```bash
+conda run -n tokengt python scripts/train_stage.py \
+  --config config/model/max_4090_tokengt.yaml \
+  --config config/data/structure_dynamics_graphs.yaml \
+  --config config/train/structure_dynamics_4090.yaml \
+  --config config/train/overrides/coordinate_head.yaml
+```
 
 PLAN-H UGM multimodal phase-2 4090 stage:
 

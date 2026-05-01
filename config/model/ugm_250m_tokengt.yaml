@@ -13,3 +13,5 @@ model:
   max_identifiers: 2048
   topology_dim: 7
   gradient_checkpointing: true
+  coordinate_head_enabled: false
+  coordinate_target_scale: 10.0

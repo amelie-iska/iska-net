@@ -40,6 +40,142 @@ NUMERIC_NODE_TYPES = {
     "temperature",
 }
 
+COORD_TOKEN_RE = re.compile(r"^COORD:f(?P<frame>\d+):a(?P<atom>\d+):(?P<axis>[xyz]):")
+AXIS_TO_INDEX = {"x": 0, "y": 1, "z": 2}
+COORDINATE_NODE_TYPES = {"coordinate_3d", "protein_coordinate", "ligand_coordinate"}
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _first_int(features: dict[str, Any], names: tuple[str, ...], default: int | None = None) -> int | None:
+    for name in names:
+        if name in features:
+            parsed = _int_or_none(features.get(name))
+            if parsed is not None:
+                return parsed
+    return default
+
+
+def _xyz_from_node(node: Any) -> list[float] | None:
+    xyz: list[float] = []
+    for axis in ("x", "y", "z"):
+        value = _float_or_none(node.features.get(axis))
+        if value is None:
+            return None
+        xyz.append(value)
+    return xyz
+
+
+def _xyz_from_text(text: str) -> list[float] | None:
+    values = [_float_or_none(match) for match in re.findall(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?", text)]
+    values = [value for value in values if value is not None]
+    if len(values) < 3:
+        return None
+    return [float(values[0]), float(values[1]), float(values[2])]
+
+
+def _coordinate_node_lookup(example: GraphExample) -> dict[tuple[int, int], list[float]]:
+    lookup: dict[tuple[int, int], list[float]] = {}
+    for node in example.nodes:
+        if node.type not in COORDINATE_NODE_TYPES:
+            continue
+        atom_index = _first_int(
+            node.features,
+            ("index", "atom_index", "atom", "slot", "slot_index", "residue_index"),
+        )
+        if atom_index is None:
+            continue
+        frame = _first_int(node.features, ("frame", "frame_index", "model"), default=0)
+        if frame is None:
+            frame = 0
+        xyz = _xyz_from_node(node) or _xyz_from_text(str(node.value))
+        if xyz is None:
+            continue
+        lookup[(frame, atom_index)] = xyz
+    return lookup
+
+
+def coordinate_targets_by_index(example: GraphExample) -> tuple[list[list[float]], list[list[float]]]:
+    """Return continuous coordinate side-channel targets aligned to target tokens.
+
+    The symbolic graph-token objective remains primary: each coordinate record
+    is still emitted as a normal target token such as ``COORD:f0:a3:x:pos_near``.
+    This helper supplies an optional continuous target for the same `<POS>` slot
+    when the graph contains explicit coordinate records and the model config has
+    enabled the coordinate head.
+    """
+    targets = [[0.0, 0.0, 0.0] for _ in example.target_tokens]
+    masks = [[0.0, 0.0, 0.0] for _ in example.target_tokens]
+    lookup = _coordinate_node_lookup(example)
+
+    for target_idx, token in enumerate(example.target_tokens):
+        match = COORD_TOKEN_RE.match(token)
+        if match is None:
+            continue
+        frame = int(match.group("frame"))
+        atom = int(match.group("atom"))
+        axis = match.group("axis")
+        xyz = lookup.get((frame, atom))
+        if xyz is None:
+            xyz = lookup.get((0, atom))
+        if xyz is None:
+            continue
+        axis_idx = AXIS_TO_INDEX[axis]
+        targets[target_idx] = [float(xyz[0]), float(xyz[1]), float(xyz[2])]
+        masks[target_idx][axis_idx] = 1.0
+
+    for item in example.coordinate_targets:
+        target_indices: list[int] = []
+        if "target_index" in item:
+            parsed = _int_or_none(item.get("target_index"))
+            if parsed is not None and 0 <= parsed < len(example.target_tokens):
+                target_indices.append(parsed)
+        elif "token" in item:
+            target_indices.extend(
+                idx for idx, token in enumerate(example.target_tokens) if token == str(item["token"])
+            )
+        if not target_indices:
+            continue
+
+        coord = item.get("coord", item.get("xyz", item.get("value")))
+        item_mask = item.get("mask")
+        parsed_coord: list[float] | None = None
+        if isinstance(coord, dict):
+            parsed_coord = [_float_or_none(coord.get(axis)) or 0.0 for axis in ("x", "y", "z")]
+        elif isinstance(coord, (list, tuple)) and len(coord) >= 3:
+            values = [_float_or_none(coord[idx]) for idx in range(3)]
+            parsed_coord = [float(value) if value is not None else 0.0 for value in values]
+
+        axis = str(item.get("axis", "")).lower()
+        axis_idx = AXIS_TO_INDEX.get(axis)
+        scalar_value = _float_or_none(item.get("axis_value", item.get("scalar")))
+        if scalar_value is None and axis_idx is not None:
+            scalar_value = _float_or_none(item.get("value"))
+
+        for idx in target_indices:
+            if parsed_coord is not None:
+                targets[idx] = parsed_coord
+                if isinstance(item_mask, (list, tuple)) and len(item_mask) >= 3:
+                    masks[idx] = [1.0 if float(item_mask[j]) else 0.0 for j in range(3)]
+                else:
+                    masks[idx] = [1.0, 1.0, 1.0]
+            if axis_idx is not None and scalar_value is not None:
+                targets[idx][axis_idx] = float(scalar_value)
+                masks[idx][axis_idx] = 1.0
+    return targets, masks
+
 
 def extract_numeric_values(example: GraphExample, max_values: int) -> tuple[list[float], list[float]]:
     values: list[float] = []
@@ -73,6 +209,8 @@ class EncodedExample:
     endpoint_ids: list[tuple[int, int]]
     identifier_ids: list[int]
     numeric_features: list[list[float]]
+    coordinate_targets: list[list[float]]
+    coordinate_mask: list[list[float]]
     slot_ids: list[int]
     labels: list[int]
     task: str
@@ -246,12 +384,15 @@ def encode_example(
     endpoints = endpoints[:source_budget]
     identifiers = identifiers[:source_budget]
     source_numeric_features = source_numeric_features[:source_budget]
+    per_target_coords, per_target_coord_mask = coordinate_targets_by_index(example)
 
     token_ids = [vocab.encode(tok) for tok in source_tokens]
     kind_ids = [KIND_TO_ID.get(kind, KIND_TO_ID["special"]) for kind in source_kinds]
     endpoint_ids = list(endpoints)
     identifier_ids = list(identifiers)
     numeric_features = list(source_numeric_features)
+    coordinate_targets = [[0.0, 0.0, 0.0] for _ in token_ids]
+    coordinate_mask = [[0.0, 0.0, 0.0] for _ in token_ids]
     slot_ids = [0 for _ in token_ids]
     labels = [-100 for _ in token_ids]
 
@@ -260,6 +401,8 @@ def encode_example(
     endpoint_ids.append((0, 0))
     identifier_ids.append(0)
     numeric_features.append([0.0] * 4)
+    coordinate_targets.append([0.0, 0.0, 0.0])
+    coordinate_mask.append([0.0, 0.0, 0.0])
     slot_ids.append(0)
     labels.append(-100)
 
@@ -270,6 +413,8 @@ def encode_example(
         endpoint_ids.append((0, 0))
         identifier_ids.append(0)
         numeric_features.append([0.0] * 4)
+        coordinate_targets.append(per_target_coords[target_idx])
+        coordinate_mask.append(per_target_coord_mask[target_idx])
         slot_ids.append(min(target_idx + 1, max_target_tokens))
         labels.append(vocab.encode(token))
 
@@ -278,6 +423,8 @@ def encode_example(
         endpoint_ids.append((0, 0))
         identifier_ids.append(0)
         numeric_features.append([0.0] * 4)
+        coordinate_targets.append([0.0, 0.0, 0.0])
+        coordinate_mask.append([0.0, 0.0, 0.0])
         slot_ids.append(min(target_idx + 1, max_target_tokens))
         labels.append(-100)
 
@@ -287,6 +434,8 @@ def encode_example(
         endpoint_ids=endpoint_ids,
         identifier_ids=identifier_ids,
         numeric_features=numeric_features,
+        coordinate_targets=coordinate_targets,
+        coordinate_mask=coordinate_mask,
         slot_ids=slot_ids,
         labels=labels,
         task=example.task,
@@ -334,6 +483,8 @@ class RandomOrderCollator:
         endpoint_ids = torch.zeros((batch, seq_len, 2), dtype=torch.long)
         identifier_ids = torch.zeros((batch, seq_len), dtype=torch.long)
         source_numeric_features = torch.zeros((batch, seq_len, 4), dtype=torch.float32)
+        coordinate_targets = torch.zeros((batch, seq_len, 3), dtype=torch.float32)
+        coordinate_mask = torch.zeros((batch, seq_len, 3), dtype=torch.float32)
         labels = torch.full((batch, seq_len), -100, dtype=torch.long)
         attention_mask = torch.zeros((batch, seq_len), dtype=torch.bool)
         topology_features = topology_feature_tensor(examples)
@@ -348,6 +499,8 @@ class RandomOrderCollator:
             endpoint_ids[row, :n] = torch.tensor(ex.endpoint_ids[:n], dtype=torch.long)
             identifier_ids[row, :n] = torch.tensor(ex.identifier_ids[:n], dtype=torch.long)
             source_numeric_features[row, :n] = torch.tensor(ex.numeric_features[:n], dtype=torch.float32)
+            coordinate_targets[row, :n] = torch.tensor(ex.coordinate_targets[:n], dtype=torch.float32)
+            coordinate_mask[row, :n] = torch.tensor(ex.coordinate_mask[:n], dtype=torch.float32)
             labels[row, :n] = torch.tensor(ex.labels[:n], dtype=torch.long)
             attention_mask[row, :n] = True
             values, value_mask = extract_numeric_values(examples[row], self.max_numeric_targets)
@@ -364,6 +517,8 @@ class RandomOrderCollator:
             "endpoint_ids": endpoint_ids,
             "identifier_ids": identifier_ids,
             "source_numeric_features": source_numeric_features,
+            "coordinate_targets": coordinate_targets,
+            "coordinate_mask": coordinate_mask,
             "labels": labels,
             "attention_mask": attention_mask,
             "causal_mask": causal_mask,
