@@ -1,0 +1,35 @@
+seed: 211
+stage:
+  name: graph_pretrain_tropical_attention
+run:
+  output_dir: outputs/synthetic_graph_pretrain_tropical_attention
+  device: cuda
+train:
+  batch_size: 4
+  eval_batch_size: 4
+  num_workers: 0
+  max_steps: 20
+  gradient_accumulation_steps: 1
+  learning_rate: 0.0003
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  amp: true
+  log_every: 5
+  eval_every: 10
+  checkpoint_every: 20
+loss:
+  topology_weight: 0.05
+tropical:
+  enabled: true
+  temperature: 1.0
+  temperature_min: 0.5
+  anneal_steps: 20
+wandb:
+  enabled: false
+  project: iska-ugm
+  mode: offline
+  group: tropical-attention-ablation
+  tags:
+    - graph-pretrain
+    - tropical-attention
+    - mhta

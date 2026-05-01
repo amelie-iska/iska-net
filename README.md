@@ -4,9 +4,24 @@
 
 [![Paper PDF](https://img.shields.io/badge/Paper-link%20PDF-1f6feb?style=for-the-badge&logo=arxiv&logoColor=white)](./assets/human_learning_transformer_learning_review_dataset_expanded.pdf)
 
-This repo is a training scaffold for "*SGRM*" (Scientific Graph Reasoning Model) a **Universal Graph Model (UGM)**, which is **וְגַם סְגָרִים**, relating the concept of a clopen model, that is open to all modalities of graph structured information and also that provides closure to the search for a universal arch that could learn on, near any data; it appears the arch that everyone was hoping would be universal and that the industry has endeavored to optimize hardware for and has developed many efficiency improvements for (flash-attention, sage-attention, flex-attention, ring-attention and various others to name a select few), proves to be what we were all hoping, with a simple and clever tokenization and positional encoding of both vertices and edges, we arive at a strong, standardized model arch that does not require any complex modifications to attention in order to perform graph reasoning; in addition, it makes the concepts expounded upon in "[Tropical Quivers of Archs](https://github.com/amelie-iska/Tropical_Quivers_of_Archs)" and the recent NeurIPS 2025 implementation of "[Tropical Attention](https://github.com/amelie-iska/Tropical-Attention)" very straightforward to standardize and provides a very clean way of understanding compositions of such models into complex directed model graphs, coupled at the (continuous) embedding space level (rather than in token space); it is a TokenGT-style graph-to-graph model type for language, reasoning, tools, SELFIES/SMILES molecules, proteins, DNA/RNA, graph-state reasoning, temperature-conditioned UMA-oracle feedback, GFlowNet training, graph/tree/chain-of-thought supervision, continuous latent reasoning, and persistent-topology/tropical-geometry diagnostics.
+This repo is a training scaffold for "*SGRM*" (Scientific Graph Reasoning Model), a **Universal Graph Model (UGM)**, which is **וְגַם סְגָרִים**: a clopen-style model that is open to graph-structured information across modalities while seeking closure under a universal architecture. The central bet is that the broadly optimized transformer substrate can become a standardized graph reasoner through a simple tokenization and positional/identifier encoding of both vertices and edges, without requiring specialized graph attention for every domain. That same graph-token interface also makes the ideas in [Tropical Quivers of Archs](https://github.com/amelie-iska/Tropical_Quivers_of_Archs) and the NeurIPS 2025 [Tropical Attention](https://github.com/amelie-iska/Tropical-Attention) implementation natural to standardize: complex directed model graphs can be composed at the continuous embedding-space level rather than only through discrete token streams. UGM is therefore a TokenGT-style graph-to-graph model type for language, reasoning, tools, SELFIES/SMILES molecules, proteins, DNA/RNA, graph-state reasoning, temperature-conditioned UMA-oracle feedback, GFlowNet training, graph/tree/chain-of-thought supervision, continuous latent reasoning, optional Tropical Attention, and persistent-topology/tropical-geometry diagnostics.
 
-Hebrew is included in both ealry and later training because it gives UGM a naturally occurring graph-reasoning problem inside language. English has rich syntax, but many English cues are carried by near-linear word order and concatenative morphology for the in most situations. Hebrew adds non-concatenative root-template morphology, clitic attachment, agreement, pronominal suffixes, optional diacritics, and frequent ambiguity in unvocalized forms. A single surface form can require the model to infer a latent root, template, part of speech, inflectional features, argument structure, and discourse context; in addition, one Hebrew root can generate a family of forms that are distant as strings but close as a lexical-semantic graph.
+**Why include MHTA (multi-head tropical attention)?**
+The [Tropical Attention](https://arxiv.org/abs/2505.17190) paper gives the exact reason MHTA belongs in UGM as an optional graph-reasoning backend: it proves that MHTA stacks universally approximate tropical circuits and realize tropical transitive closure by composition. In the paper's words, MHTA is a universal approximator of max-plus dynamic programming for combinatorial optimization with closure; the relevant proof references are Theorem C.3, Corollary C.3.1, and Theorem 3.2.
+
+That matters because many graph reasoning tasks are max-plus or min-plus computations in disguise: shortest paths, reachability, matching, dependency closure, Viterbi-style proof/state selection, verifier-guided branch choice, and graph-of-thought expansion. The paper also reports stronger out-of-distribution generalization in both length and value regimes, with robustness to perturbative noise, compared with softmax and recurrent baselines on combinatorial reasoning tasks. UGM therefore exposes MHTA behind `model.attention_backend: tropical` so we can test that inductive bias on the same graph records, validation, W&B traces, and training curriculum as the standard TokenGT-style softmax backend.
+
+Proof-level details are in the paper PDF linked above and in the local TeX source. See the subsection `Multi-head Tropical Attention as an optional UGM backend` in [`assets/human_learning_transformer_learning_review_dataset_expanded.tex`](./assets/human_learning_transformer_learning_review_dataset_expanded.tex), which includes:
+
+- the definition of tropical projective representatives and the Hilbert projective metric;
+- the external proof references from the Tropical Attention paper: Theorem C.3, Corollary C.3.1, and Theorem 3.2;
+- a projective-invariance lemma for `d_H`;
+- a proposition showing that one MHTA head realizes a weighted max gate;
+- a theorem proving that the MHTA block is piecewise-linear over tropical cells;
+- a corollary explaining why bounded-horizon max-plus dynamic programs can be unrolled by stacked MHTA layers.
+
+**Why we include Hebrew in the training corpus:**
+Hebrew is included in both early and later training because it gives UGM a naturally occurring graph-reasoning problem inside language. English has rich syntax, but many English cues are carried by near-linear word order and concatenative morphology in most situations. Hebrew adds non-concatenative root-template morphology, clitic attachment, agreement, pronominal suffixes, optional diacritics, and frequent ambiguity in unvocalized forms. A single surface form can require the model to infer a latent root, template, part of speech, inflectional features, argument structure, and discourse context; in addition, one Hebrew root can generate a family of forms that are distant as strings but close as a lexical-semantic graph.
 
 For a UGM-style model, those phenomena are direct supervision for graph reasoning. The helpful representation is not only a left-to-right path: it is a typed hypergraph whose nodes may include surface tokens, roots, radicals, templates, morphemes, lemmas, agreement features, predicates, and syntactic roles. Training on Hebrew rewards the model for preserving incidence relations, resolving many-to-one and one-to-many mappings, following multi-hop dependencies, and remaining invariant to surface changes that do not change the underlying root or role. These are the same operations UGM needs for proof graphs, tool traces, molecule strings, residue motifs, and oracle-scored candidate records.
 
@@ -20,9 +35,9 @@ The implemented path is intentionally practical for one RTX 4090: graph-rich exa
 - Dataset acquisition manifest and small downloaded samples in `data/raw/`.
 - Graphification scripts for synthetic, math, code, Lean/proof, and molecule rows.
 - Random-order autoregressive decoding with `<POS>` query tokens.
-- Compact TokenGT-style model using node/edge endpoint identifier embeddings, optional gradient checkpointing, and local LoRA adapters.
+- Compact TokenGT-style model using node/edge endpoint identifier embeddings, optional gradient checkpointing, local LoRA adapters, and an optional Multi-Head Tropical Attention backend.
 - Training runner with tqdm, JSONL metrics, checkpoints, resume support, validation, AMP, gradient clipping, schedulers, and optional W&B.
-- Topology summaries, tropical logit diagnostics, verifier adapters, and curation tooling.
+- Topology summaries, tropical logit diagnostics, Tropical Attention metrics, verifier adapters, and curation tooling.
 - Domain vertical slices for code/unit tests, Lean availability/compile checks, and RDKit-backed molecule graphs when RDKit is installed.
 - PLAN-D/PLAN-G science-data slices for SFM/NatureLM reference vocabulary and UniGenX-style molecule/material graphs.
 - PLAN-E Hebrew morphology/root slices with UD Hebrew HTB, Hebrew QA, Nakdimon diacritization, root-template graphs, and root-extension GFlowNet training.
@@ -34,6 +49,7 @@ The implemented path is intentionally practical for one RTX 4090: graph-rich exa
 - Config-driven validation and inference CLIs.
 - Smoke tests.
 - `torchgfn` cloned under `data/external_repos/torchgfn` for reference.
+- `Tropical-Attention` cloned under `data/external_repos/Tropical-Attention` for the upstream MHTA reference implementation.
 
 ## Environment
 
@@ -142,8 +158,10 @@ FULL_TRAIN_EVAL_MAX_BATCHES=full scripts/run_full_phase1_phase2_training.sh
 FULL_TRAIN_NUM_WORKERS=12 FULL_TRAIN_PREFETCH_FACTOR=6 scripts/run_full_phase1_phase2_training.sh
 FULL_TRAIN_BATCH_SIZE=6 FULL_TRAIN_GRAD_ACCUM=6 ./scripts/run_full_phase1_phase2_training_250m.sh
 FULL_TRAIN_SKIP_POLICY_CHECK=1 ./scripts/run_full_phase1_phase2_training_250m.sh
+ENABLE_TROPICAL_ATTENTION=1 FULL_TRAIN_BATCH_SIZE=1 FULL_TRAIN_GRAD_ACCUM=36 ./scripts/run_full_phase1_phase2_training_250m.sh
 ./scripts/train_full_selected_250m_direct.sh
 FULL_TRAIN_MAX_STEPS=20 ./scripts/train_full_selected_250m_direct.sh
+ENABLE_TROPICAL_ATTENTION=1 FULL_TRAIN_MAX_STEPS=20 ./scripts/train_full_selected_250m_direct.sh
 MODEL_CONFIG=config/model/ugm_250m_tokengt.yaml scripts/run_full_phase1_phase2_training.sh
 TRAINING_FIRST=0 SKIP_INTERPRO_MOTIF_DOWNLOAD=0 scripts/run_full_phase1_phase2_training.sh
 ```
@@ -296,11 +314,12 @@ conda run -n tokengt python scripts/train_stage.py \
 
 The corrected science references are SFM/NatureLM (`https://github.com/amelie-iska/SFM`, paper `https://arxiv.org/abs/2502.07527`) and UniGenX (`https://github.com/amelie-iska/UniGenX`, paper `https://arxiv.org/abs/2503.06687`).
 
-Clone the corrected SFM/NatureLM and UniGenX reference repositories and extract their domain/token dictionaries into the training vocabulary:
+Clone the corrected SFM/NatureLM and UniGenX reference repositories, clone the Tropical-Attention reference implementation, and extract science domain/token dictionaries into the training vocabulary:
 
 ```bash
 conda run -n tokengt python scripts/acquire_model_files.py --repo-name sfm
 conda run -n tokengt python scripts/acquire_model_files.py --repo-name unigenx
+conda run -n tokengt python scripts/acquire_model_files.py --repo-name tropical_attention
 
 conda run -n tokengt python scripts/extract_reference_tokens.py \
   --sfm-dir data/external_repos/sfm \
@@ -626,6 +645,41 @@ conda run -n tokengt python scripts/run_graph_state_ablation.py \
 ```
 
 Use `--dry-run` to print the exact variant commands without training. The graph-state implementation treats reasoning as an evolving graph with optional latent thought nodes and verifier/tool observations; chain-of-thought text is only a possible rendering of that state.
+
+Optional Multi-Head Tropical Attention backend smoke stage. This replaces the self-attention kernel inside the compact TokenGT encoder with a masked max-plus/Hilbert-projective MHTA backend while leaving the default model path unchanged. It logs `tropical_attention/*` metrics to JSONL and W&B when W&B is enabled.
+
+```bash
+conda run -n tokengt python scripts/train_stage.py \
+  --config config/model/tiny_tokengt_tropical.yaml \
+  --config config/data/synthetic_graphs.yaml \
+  --config config/train/graph_pretrain_tropical_attention_tiny.yaml
+```
+
+For an existing model config, the backend can also be enabled explicitly with:
+
+```bash
+conda run -n tokengt python scripts/train_stage.py \
+  --config config/model/tiny_tokengt.yaml \
+  --config config/train/overrides/tropical_attention_backend.yaml \
+  --config config/data/synthetic_graphs.yaml \
+  --config config/train/graph_pretrain_tiny.yaml
+```
+
+For the full selected public corpus, use the shell switch rather than editing YAML by hand. The switch appends `config/model/overrides/tropical_attention_backend.yaml`, leaving the existing data, context, and training configs in place. On a 24GB RTX 4090, start conservatively with the 250M profile and micro-batch 1; increase only after a short run proves memory headroom.
+
+```bash
+ENABLE_TROPICAL_ATTENTION=1 \
+FULL_TRAIN_BATCH_SIZE=1 \
+FULL_TRAIN_EVAL_BATCH_SIZE=1 \
+FULL_TRAIN_GRAD_ACCUM=36 \
+./scripts/run_full_phase1_phase2_training_250m.sh
+```
+
+To jump directly to training after the corpus, context config, UMA weights, and vocab already exist:
+
+```bash
+ENABLE_TROPICAL_ATTENTION=1 ./scripts/train_full_selected_250m_direct.sh
+```
 
 Code, Lean, and chemistry vertical-slice SFT smoke stages:
 
@@ -959,6 +1013,7 @@ Current smoke coverage:
 - `planning/PLAN-D.md`: earlier science-data integration plan, superseded for NatureLM/UniGenX source correction by PLAN-G.
 - `planning/PLAN-G.md`: corrected SFM/NatureLM and UniGenX GitHub integration.
 - `planning/PLAN-H.md`: UGM multimodal graph-to-graph and oracle-feedback integration.
+- `planning/TROPICAL-ATTENTION-INTEGRATION-PLAN.md`: source audit, mathematical contract, config toggles, hyperparameter guidance, metrics, risks, and validation criteria for optional MHTA training.
 - `planning/UGM-SYNTHETIC-FAUX-CODE-AUDIT.md`: first-party synthetic/proxy/faux-path inventory and replacement plan.
 - `planning/FULL-PRETRAINING-DATASET.md`: complete selected public pretraining corpus, token counts, per-dataset totals, and completeness boundary.
 - `planning/TRAINING-SEQUENCE.md`: ordered commands for readiness, data prep, full selected graph pretraining, follow-on stages, validation, inference, and final QA.
@@ -973,7 +1028,7 @@ Current smoke coverage:
 - `src/iska_reasoner/models/random_order_tokengt.py`: model.
 - `src/iska_reasoner/data/dataset.py`: random-order collator.
 - `src/iska_reasoner/topology/`: graph topology and distogram-style summaries.
-- `src/iska_reasoner/tropical/`: annealing and logit selection diagnostics.
+- `src/iska_reasoner/tropical/`: annealing, logit selection diagnostics, masked MHTA, and tropical transformer encoder utilities.
 - `src/iska_reasoner/oracles/`: live external oracle adapters, including FairChem/UMA.
 - `src/iska_reasoner/models/numeric_diffusion.py`: conditional numeric diffusion head.
 - `scripts/prepare_science_sources.py`: local PubChem/UniProt/RefSeq/Materials/ChEMBL/BindingDB/PDBbind/EC preparation.

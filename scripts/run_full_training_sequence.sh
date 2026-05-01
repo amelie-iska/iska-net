@@ -51,6 +51,8 @@ FULL_TRAIN_CHECKPOINT_EVERY="${FULL_TRAIN_CHECKPOINT_EVERY:-5000}"
 FULL_TRAIN_NUM_WORKERS="${FULL_TRAIN_NUM_WORKERS:-8}"
 FULL_TRAIN_EVAL_NUM_WORKERS="${FULL_TRAIN_EVAL_NUM_WORKERS:-2}"
 FULL_TRAIN_PREFETCH_FACTOR="${FULL_TRAIN_PREFETCH_FACTOR:-4}"
+ENABLE_TROPICAL_ATTENTION="${ENABLE_TROPICAL_ATTENTION:-0}"
+TROPICAL_ATTENTION_CONFIG="${TROPICAL_ATTENTION_CONFIG:-config/model/overrides/tropical_attention_backend.yaml}"
 WANDB_ENABLED="${WANDB_ENABLED:-1}"
 WANDB_MODE="${WANDB_MODE:-online}"
 WANDB_PROJECT="${WANDB_PROJECT:-iska-ugm}"
@@ -78,7 +80,20 @@ export SKIP_REFERENCE_REFRESH_IF_READY TRAINING_FIRST WANDB_ENABLED WANDB_MODE W
 export FULL_TRAIN_EPOCHS FULL_TRAIN_BATCH_SIZE FULL_TRAIN_EVAL_BATCH_SIZE FULL_TRAIN_GRAD_ACCUM FULL_TRAIN_SKIP_POLICY_CHECK
 export FULL_TRAIN_EVAL_EVERY FULL_TRAIN_EVAL_MAX_BATCHES FULL_TRAIN_CHECKPOINT_EVERY
 export FULL_TRAIN_NUM_WORKERS FULL_TRAIN_EVAL_NUM_WORKERS FULL_TRAIN_PREFETCH_FACTOR
+export ENABLE_TROPICAL_ATTENTION TROPICAL_ATTENTION_CONFIG
 export REQUIRE_UMA_WEIGHTS UMA_MODEL_NAME UMA_TASK_NAME UMA_DEVICE UMA_SCORE_SMOKE
+
+if [[ "$ENABLE_TROPICAL_ATTENTION" == "1" ]]; then
+  if [[ ! -f "$TROPICAL_ATTENTION_CONFIG" ]]; then
+    printf 'Tropical Attention requested but config not found: %s\n' "$TROPICAL_ATTENTION_CONFIG" >&2
+    exit 1
+  fi
+  case ",$WANDB_TAGS," in
+    *,tropical-attention,*) ;;
+    *) WANDB_TAGS="$WANDB_TAGS,tropical-attention,mhta" ;;
+  esac
+  export WANDB_TAGS
+fi
 
 timestamp() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
@@ -164,6 +179,8 @@ Environment overrides:
   FULL_TRAIN_NUM_WORKERS=8
   FULL_TRAIN_EVAL_NUM_WORKERS=2
   FULL_TRAIN_PREFETCH_FACTOR=4
+  ENABLE_TROPICAL_ATTENTION=0
+  TROPICAL_ATTENTION_CONFIG=config/model/overrides/tropical_attention_backend.yaml
   REQUIRE_UMA_WEIGHTS=1
   UMA_MODEL_NAME=uma-s-1p2
   UMA_TASK_NAME=omol
@@ -179,6 +196,7 @@ Environment overrides:
 Examples:
   scripts/run_full_training_sequence.sh
   START_AT=03 scripts/run_full_training_sequence.sh
+  ENABLE_TROPICAL_ATTENTION=1 START_AT=03 scripts/run_full_training_sequence.sh
   DRY_RUN=1 scripts/run_full_training_sequence.sh
 EOF
 }
@@ -285,6 +303,9 @@ run_cx() {
 
 run_train_stage() {
   local args=(python scripts/train_stage.py "$@")
+  if [[ "${ENABLE_TROPICAL_ATTENTION:-0}" == "1" ]]; then
+    args+=(--config "$TROPICAL_ATTENTION_CONFIG")
+  fi
   if [[ "${WANDB_ENABLED:-0}" == "1" ]]; then
     args+=(--config config/train/overrides/wandb_online.yaml)
   fi
@@ -360,6 +381,7 @@ cat > "$SUMMARY_MD" <<EOF
 - Progress events: \`$PROGRESS_JSONL\`
 - W&B enabled: \`$WANDB_ENABLED\`
 - W&B project/group/mode: \`$WANDB_PROJECT / $WANDB_GROUP / $WANDB_MODE\`
+- Tropical Attention: \`$ENABLE_TROPICAL_ATTENTION\` via \`$TROPICAL_ATTENTION_CONFIG\`
 - Full phase-1 training epochs: \`$FULL_TRAIN_EPOCHS\`
 - In-training validation: every \`$FULL_TRAIN_EVAL_EVERY\` steps, max batches \`$FULL_TRAIN_EVAL_MAX_BATCHES\`
 - Full phase-1 DataLoader: workers \`$FULL_TRAIN_NUM_WORKERS\`, eval workers \`$FULL_TRAIN_EVAL_NUM_WORKERS\`, prefetch factor \`$FULL_TRAIN_PREFETCH_FACTOR\`
@@ -374,6 +396,7 @@ log "TQDM_DYNAMIC_NCOLS=$TQDM_DYNAMIC_NCOLS TQDM_MININTERVAL=$TQDM_MININTERVAL P
 log "W&B: enabled=$WANDB_ENABLED project=$WANDB_PROJECT group=$WANDB_GROUP mode=$WANDB_MODE command_events=$WANDB_LOG_COMMANDS"
 log "TRAINING_FIRST=$TRAINING_FIRST SKIP_REFERENCE_REFRESH_IF_READY=$SKIP_REFERENCE_REFRESH_IF_READY"
 log "PYTORCH_CUDA_ALLOC_CONF=$PYTORCH_CUDA_ALLOC_CONF"
+log "Tropical Attention: enabled=$ENABLE_TROPICAL_ATTENTION config=$TROPICAL_ATTENTION_CONFIG"
 log "FULL_TRAIN_BATCH_SIZE=${FULL_TRAIN_BATCH_SIZE:-config-default} FULL_TRAIN_EVAL_BATCH_SIZE=${FULL_TRAIN_EVAL_BATCH_SIZE:-config/default} FULL_TRAIN_GRAD_ACCUM=${FULL_TRAIN_GRAD_ACCUM:-config-default} FULL_TRAIN_SKIP_POLICY_CHECK=$FULL_TRAIN_SKIP_POLICY_CHECK"
 log "FULL_TRAIN_EPOCHS=$FULL_TRAIN_EPOCHS FULL_TRAIN_EVAL_EVERY=$FULL_TRAIN_EVAL_EVERY FULL_TRAIN_EVAL_MAX_BATCHES=$FULL_TRAIN_EVAL_MAX_BATCHES FULL_TRAIN_CHECKPOINT_EVERY=$FULL_TRAIN_CHECKPOINT_EVERY"
 log "FULL_TRAIN_NUM_WORKERS=$FULL_TRAIN_NUM_WORKERS FULL_TRAIN_EVAL_NUM_WORKERS=$FULL_TRAIN_EVAL_NUM_WORKERS FULL_TRAIN_PREFETCH_FACTOR=$FULL_TRAIN_PREFETCH_FACTOR"
@@ -392,12 +415,14 @@ if [[ "$SKIP_REFERENCE_REFRESH_IF_READY" == "1" \
   && -s data/processed/reference_tokens/naturelm_unigenx_tokens.txt \
   && -s data/processed/reference_tokens/multimodal_graph_tokens.txt \
   && -s data/processed/reference_tokens/motif_graph_tokens.txt \
-  && -d data/external_repos/fairchem/.git ]]; then
+  && -d data/external_repos/fairchem/.git \
+  && -d data/external_repos/Tropical-Attention/.git ]]; then
   printf 'Reference vocab artifacts already exist; skipping slow refresh because SKIP_REFERENCE_REFRESH_IF_READY=1.\n'
 else
   run_cx python scripts/acquire_model_files.py --repo-name sfm
   run_cx python scripts/acquire_model_files.py --repo-name unigenx
   run_cx python scripts/acquire_model_files.py --repo-name fairchem
+  run_cx python scripts/acquire_model_files.py --repo-name tropical_attention
   run_cx python scripts/extract_reference_tokens.py \
     --sfm-dir data/external_repos/sfm \
     --unigenx-dir data/external_repos/unigenx \

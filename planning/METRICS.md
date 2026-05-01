@@ -27,6 +27,14 @@ Metrics:
 - `tropical/logit_entropy`: entropy of target-position logits under the current tropical temperature.
 - `tropical/top1_margin`: top-1 minus top-2 logit margin.
 - `tropical/top1_confidence`: mean max softmax probability.
+- `tropical_attention/enabled`: emitted as `1.0` when the model-level MHTA backend is active.
+- `tropical_attention/score_mean`: mean valid MHTA score, equal to negative Hilbert distance for the symmetric backend.
+- `tropical_attention/score_std`: standard deviation of valid MHTA scores.
+- `tropical_attention/distance_mean`: mean valid Hilbert projective distance.
+- `tropical_attention/top1_margin`: mean gap between the best and second-best valid key scores, excluding queries with fewer than two valid keys.
+- `tropical_attention/selection_confidence`: softmax diagnostic over MHTA scores; this is only a logging proxy because MHTA aggregation itself uses max-plus selection.
+- `tropical_attention/unique_argmax_rate`: number of selected key positions divided by sequence length for valid query positions.
+- `tropical_attention/context_abs_mean`: mean absolute tropical context before Euclidean devaluation.
 - `topology/*`: batch mean graph topology summaries.
 - `verifier/*`: validation-time verifier reward/pass diagnostics.
 - `code/*`, `lean/*`, `chem/*`, `science/*`, `hebrew/*`, `multimodal/*`: domain validation metrics when the batch contains those task families.

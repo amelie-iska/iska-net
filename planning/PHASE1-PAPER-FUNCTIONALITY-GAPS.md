@@ -124,20 +124,24 @@ The paper warns about topological pareidolia and calls for causal tests: edge de
 
 ### 5. Tropical Attention as a Selectable Training Backend
 
-**Status:** Under-implemented.
+**Status:** Implemented as an experimental backend; broader backend variants remain future work.
 
-The repository has standalone tropical attention utilities, but the main graph model still uses a standard transformer encoder path. The paper describes low-temperature attention, max-plus selection, tropical attention, and tropical training schedules as model-level experiments.
+The repository now has a model config switch for `model.attention_backend: tropical`, a masked MHTA transformer encoder path, tiny configs, train/validation logging, and unit tests. The paper describes a broader family of low-temperature attention, max-plus selection, tropical attention, and tropical training schedules as model-level experiments; only the MHTA path is implemented as a selectable backend.
 
-**Needed updates:**
+**Implemented updates:**
 
 - Add a model config switch for attention backend:
   - standard softmax attention;
-  - annealed softmax attention;
-  - tropical/hard-selection experimental attention;
-  - hybrid top-k sparse attention.
-- Integrate the existing `TropicalAttention` module into the model stack or add a compatible transformer block.
-- Add temperature schedules that can be configured per stage and per validation run.
-- Log sharp-selection metrics per layer and head.
+  - tropical/MHTA experimental attention.
+- Add a compatible transformer block with log-ReLU tropicalization, Hilbert scores, max-plus aggregation, causal masks, and padding masks.
+- Keep output-logit tropical temperature schedules configurable per stage and validation run.
+- Log sharp-selection metrics from the tropical backend.
+
+**Still future work:**
+
+- annealed softmax attention as a separate backend;
+- hybrid top-k sparse attention;
+- full per-head/per-layer artifacts beyond aggregate metrics.
 
 **Acceptance tests:**
 
@@ -507,7 +511,7 @@ Persistent topology, hidden-state distograms, loop dynamics, and GFlowNet branch
 3. Upgrade GFlowNet states from target-token sets to typed graph-edit trajectories.
 4. Add verifier-guided graph-of-thought inference with branch, verify, repair, and merge actions.
 5. Add process-supervised trace generation and datasets.
-6. Add tropical attention backend and tropical transition signature logging.
+6. Extend the tropical attention backend from aggregate metrics to full tropical transition signature artifacts.
 7. Add stochastic loop and ergodic diagnostics.
 8. Add differentiable topology proxy losses.
 9. Add full persistent Laplacian support behind strict size caps.

@@ -29,6 +29,7 @@ data/samples/
 data/raw_motifs/
 data/external_repos/
 data/external_models/
+data/external_papers/
 !data/README.md
 !data/manifests/
 !data/manifests/**

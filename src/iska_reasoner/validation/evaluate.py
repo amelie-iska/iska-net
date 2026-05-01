@@ -46,6 +46,8 @@ def evaluate_model(
             metrics["topology_loss"] = out["topology_loss"].item()
         if "numeric_diffusion_loss" in out:
             metrics["numeric_diffusion_loss"] = out["numeric_diffusion_loss"].item()
+        for key, value in out.get("attention_metrics", {}).items():
+            metrics[key] = value.item() if torch.is_tensor(value) else value
         metrics.update(logit_diagnostics(out["logits"], tensor_batch["labels"]))
         topo = tensor_batch.get("topology_features")
         if topo is not None:

@@ -33,6 +33,8 @@ MAX_GRAPH_TOKENS=4500000000 scripts/run_full_phase1_phase2_training.sh
 WANDB_MODE=offline scripts/run_full_phase1_phase2_training.sh
 WANDB_ENABLED=0 scripts/run_full_phase1_phase2_training.sh
 TRAINING_FIRST=0 SKIP_INTERPRO_MOTIF_DOWNLOAD=0 scripts/run_full_phase1_phase2_training.sh
+ENABLE_TROPICAL_ATTENTION=1 FULL_TRAIN_BATCH_SIZE=1 FULL_TRAIN_GRAD_ACCUM=36 scripts/run_full_phase1_phase2_training_250m.sh
+ENABLE_TROPICAL_ATTENTION=1 scripts/train_full_selected_250m_direct.sh
 ```
 
 ## 0. Readiness
@@ -47,6 +49,7 @@ conda run -n tokengt python scripts/quality_assess.py
 ```bash
 conda run -n tokengt python scripts/acquire_model_files.py --repo-name sfm
 conda run -n tokengt python scripts/acquire_model_files.py --repo-name unigenx
+conda run -n tokengt python scripts/acquire_model_files.py --repo-name tropical_attention
 
 conda run -n tokengt python scripts/extract_reference_tokens.py \
   --sfm-dir data/external_repos/sfm \

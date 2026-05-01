@@ -49,6 +49,7 @@ Supported order sources:
 - optional conditional numeric diffusion head for coordinate/property/assay targets;
 - optional gradient checkpointing across encoder layers;
 - optional project-local LoRA adapters for linear layers.
+- optional masked Multi-Head Tropical Attention backend, enabled by `model.attention_backend: tropical`, using log-ReLU tropicalization, headwise max-plus projections, Hilbert-projective query-key scores, and max-plus value aggregation. The default remains PyTorch softmax attention.
 
 ## Training Stages
 
@@ -67,7 +68,7 @@ Supported order sources:
 
 Current topology support includes graph component count, cycle rank, edge-type entropy, H0 total persistence over graph shortest-path distances, and Laplacian algebraic connectivity. PLAN-F adds optional `ripser`/`gudhi` persistent-homology summaries when those libraries are installed, plus fallback persistent-Laplacian-style spectra over shortest-path filtrations.
 
-Tropical support includes temperature schedules, logit entropy, top-1 margin, and top-1 confidence for supervised target positions. PLAN-F also adds a standalone max-plus `TropicalAttention` module, activation-cell transition signatures, and a maximum-spanning-arborescence parser for tropical dependency-selection experiments.
+Tropical support has two layers. The training-level `tropical:` config controls temperature schedules, logit entropy, top-1 margin, and top-1 confidence for supervised target positions. The model-level `model.attention_backend: tropical` switch replaces each encoder self-attention block with masked MHTA. This backend is optional and logs `tropical_attention/*` metrics for Hilbert-score geometry, selection confidence, argmax diversity, and context scale. PLAN-F also adds a standalone max-plus `TropicalAttention` module, activation-cell transition signatures, and a maximum-spanning-arborescence parser for tropical dependency-selection experiments.
 
 ## GFlowNet Stage
 
@@ -141,10 +142,11 @@ The random-order collator now reserves sequence room for target `<POS>` query sl
 ## Validation and Inference
 
 - `scripts/validate_stage.py` computes loss, perplexity, random-order token accuracy, topology summaries, tropical diagnostics, and verifier metrics.
+- When the MHTA backend is enabled, validation also reports `tropical_attention/*` metrics under the validation prefix.
 - `scripts/validate_stage.py` also accepts validation YAML configs.
 - `scripts/infer.py` converts text or graph JSON to a graph prefix and generates target graph tokens greedily or by sampling, then reports verifier diagnostics. It supports config files and a simple verifier-guided retry loop.
 - `scripts/profile_model.py` reports local parameter counts and a rough memory footprint for 4090 planning.
 
 ## 4090 Scaling
 
-The default configs are deliberately small. For 4090-scale experiments, use `config/model/small_4090_tokengt.yaml` and increase sequence length slowly. Full 15B training and dense 256K context training are outside the scope of a single 24GB GPU; the intended path is graph memory, retrieval, and adapter training.
+The default configs are deliberately small. For 4090-scale experiments, use `config/model/small_4090_tokengt.yaml` and increase sequence length slowly. For MHTA experiments, start from `config/model/tiny_tokengt_tropical.yaml` or the override `config/train/overrides/tropical_attention_backend.yaml`; reduce batch size because explicit Hilbert-distance tensors scale as `[batch, heads, seq, seq, head_dim]`. Full 15B training and dense 256K context training are outside the scope of a single 24GB GPU; the intended path is graph memory, retrieval, and adapter training.

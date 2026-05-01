@@ -48,6 +48,7 @@ def main() -> None:
         path_status("data/external_repos/sfm"),
         path_status("data/external_repos/unigenx"),
         path_status("data/external_repos/fairchem"),
+        path_status("data/external_repos/Tropical-Attention"),
         path_status("data/processed/reference_tokens/naturelm_unigenx_tokens.txt"),
         path_status("data/processed/reference_tokens/motif_graph_tokens.txt"),
         path_status("data/processed/reference_tokens/motif_graph_tokens.summary.json"),
@@ -60,6 +61,10 @@ def main() -> None:
         path_status("config/train/multimodal_phase2_tiny.yaml"),
         path_status("config/train/multimodal_phase2_4090.yaml"),
         path_status("config/train/structure_dynamics_4090.yaml"),
+        path_status("config/model/tiny_tokengt_tropical.yaml"),
+        path_status("config/train/graph_pretrain_tropical_attention_tiny.yaml"),
+        path_status("config/train/overrides/tropical_attention_backend.yaml"),
+        path_status("config/model/overrides/tropical_attention_backend.yaml"),
         path_status("scripts/check_dataset_integrity.py"),
         path_status("scripts/validate_dataset_catalog.py"),
         path_status("scripts/download_uma_weights.py"),
@@ -83,7 +88,7 @@ def main() -> None:
         "elan_available": shutil.which("elan") is not None,
     }
     summary["ready_python_optionals"] = all(item["available"] for item in modules)
-    summary["ready_reference_data"] = all(item["exists"] for item in paths[:11])
+    summary["ready_reference_data"] = all(item["exists"] for item in paths[:12])
 
     if args.json:
         print(json.dumps(summary, indent=2, sort_keys=True))

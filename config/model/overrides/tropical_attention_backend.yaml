@@ -1,0 +1,9 @@
+model:
+  attention_backend: tropical
+  tropical_use_projection: true
+  tropical_use_norm_shift: true
+  tropical_projective_normalize: true
+  tropical_symmetric: true
+  tropical_context_clamp: 12.0
+  tropical_score_floor: -10000.0
+  tropical_eps: 0.000001

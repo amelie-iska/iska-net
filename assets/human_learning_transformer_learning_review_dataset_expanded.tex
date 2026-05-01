@@ -910,6 +910,123 @@ For $i\ne m$, $s_i-s_m<0$, so $e^{(s_i-s_m)/\tau}\to0$. Dividing numerator and d
 
 If multiple scores tie, the limit is a convex average over maximizers. This matters for reasoning. Many discrete algorithms, such as shortest paths and dynamic programming, use min-plus or max-plus recurrences. Softmax attention can approximate a softened version; tropical attention mechanisms explicitly operate in the max-plus semiring and have been proposed for neural algorithmic reasoning \cite{HashemiTropicalAttention2025}. Very recent work also attempts a tropical geometry framework for transformer expressivity and spatial partitioning \cite{TransformerTropical2026}. These results are promising but newer than the core transformer literature and should be treated as developing.
 
+\subsection{Multi-head Tropical Attention as an optional UGM backend}
+
+The NeurIPS 2025 Tropical Attention proposal replaces the dot-product/softmax attention kernel by an operation in tropical projective space \cite{HashemiTropicalAttention2025}. The relevant point for UGM is not that softmax attention should be abandoned everywhere. The relevant point is that many graph reasoning tasks contain an internal dynamic program: shortest paths, reachability, maximum-weight dependency structures, Viterbi paths, proof-state selection, graph-of-thought branch choice, and knapsack-like resource allocation. These tasks are naturally written with maxima, minima, and ordinary addition. Tropical Attention gives the transformer a direct max-plus computation path for such decisions.
+
+\begin{definition}[Tropical projective representative]
+Let \(x\in\R^d\). A finite tropical projective representative is obtained by a valuation-like map
+\[
+  \phi(x)=u-\max_r u_r\,\1,\qquad
+  u=\log(1+\operatorname{ReLU}(Wx)).
+\]
+Thus \(\max_r \phi(x)_r=0\). Two tropical vectors \(a,b\in\R^d\) are projectively equivalent when \(b=a+c\1\) for some scalar \(c\). The quotient by this relation is the finite part of tropical projective space.
+\end{definition}
+
+\begin{definition}[Tropical Hilbert projective metric]
+For \(a,b\in\R^d\), define
+\[
+  d_H(a,b)=\max_r(a_r-b_r)-\min_r(a_r-b_r).
+\]
+This metric depends only on the relative coordinate differences between \(a\) and \(b\), not on their absolute additive scale.
+\end{definition}
+
+\begin{lemma}[Projective invariance of \(d_H\)]
+For any scalars \(c,d\in\R\),
+\[
+  d_H(a+c\1,b+d\1)=d_H(a,b).
+\]
+\end{lemma}
+\begin{proof}
+The coordinate difference becomes
+\[
+(a_r+c)-(b_r+d)=(a_r-b_r)+(c-d).
+\]
+Both the maximum and the minimum over \(r\) are shifted by the same scalar \(c-d\), so their difference is unchanged.
+\end{proof}
+
+\begin{definition}[Multi-head Tropical Attention]
+Let \(X\in\R^{n\times d}\) be a token-hidden matrix and let \(H\) divide \(d\). For head \(h\), write \(d_h=d/H\). Tropical Attention forms tropicalized projections
+\[
+  Q^{(h)}= \Phi(XW_Q^{(h)}),\qquad
+  K^{(h)}= \Phi(XW_K^{(h)}),\qquad
+  V^{(h)}= \Phi(XW_V^{(h)}),
+\]
+optionally followed by head-wise max-plus linear maps
+\[
+  (\mathcal A\odot z)_o=\max_r\{\mathcal A_{or}+z_r\}.
+\]
+The score from query token \(i\) to key token \(j\) is
+\[
+  S_{ij}^{(h)}=-d_H(q_i^{(h)},k_j^{(h)}).
+\]
+The context is the max-plus matrix-vector product
+\[
+  C_i^{(h)}
+  =
+  \bigoplus_{j=1}^n S_{ij}^{(h)}\odot v_j^{(h)}
+  =
+  \max_j\{S_{ij}^{(h)}+v_j^{(h)}\},
+\]
+where the maximum is coordinatewise in the value dimension. The head contexts are devalued back to Euclidean coordinates, concatenated, and projected as in an ordinary transformer block.
+\end{definition}
+
+\begin{proposition}[A tropical attention head realizes a weighted max gate]
+Fix scalars \(x_j\) and weights \(w_j\) for \(j\in J\). A tropical attention head can realize
+\[
+  y=\max_{j\in J}(x_j+w_j)
+\]
+at a chosen query position, up to arbitrarily small error when irrelevant tokens are assigned sufficiently negative scores.
+\end{proposition}
+\begin{proof}
+Assign the value vector at token \(j\) to contain \(x_j+w_j\) in the output coordinate of interest. Choose query and key representatives so that the Hilbert distance from the query to keys in \(J\) is \(0\), hence their score is \(0\). For every irrelevant token \(r\notin J\), choose its key so that \(d_H(q,k_r)=\Gamma_r\) with \(\Gamma_r\) large. Its score is then \(-\Gamma_r\). The tropical context is
+\[
+\max\left(\max_{j\in J}(0+x_j+w_j),\max_{r\notin J}(-\Gamma_r+v_r)\right).
+\]
+Taking all \(\Gamma_r\) larger than the finite value range suppresses irrelevant tokens and leaves \(\max_{j\in J}(x_j+w_j)\).
+\end{proof}
+
+\begin{theorem}[Piecewise-linear tropical attention cells]
+For fixed parameters and fixed masks, a Multi-head Tropical Attention block without the final Euclidean devaluation is a piecewise-linear map of its tropicalized inputs. Its cells are determined by finitely many equalities of coordinate differences and max-plus value comparisons.
+\end{theorem}
+\begin{proof}
+The functions \(a\mapsto\max_r a_r\), \(a\mapsto\min_r a_r\), and \(a\mapsto\max_j a_j\) are piecewise-linear. The score \(S_{ij}=-d_H(q_i,k_j)\) is formed by a maximum and a minimum of affine coordinate differences. The context coordinate \(C_{i\ell}=\max_j(S_{ij}+v_{j\ell})\) is a maximum of piecewise-linear functions. A finite composition of such maps is piecewise-linear, and the boundaries occur where two candidate maxima, minima, or value terms tie. These tie equalities define polyhedral cell boundaries.
+\end{proof}
+
+\begin{corollary}[Dynamic-program compatibility]
+Any finite max-plus dynamic-program update of the form
+\[
+  d_v(t+1)=\max_{u:(u,v)\in E}\{w_{uv}+d_u(t)\}
+\]
+has the same algebraic form as the tropical attention context update. A stack of tropical attention heads can therefore represent bounded-horizon Bellman-style updates by assigning heads, tokens, and values to graph states and edge weights.
+\end{corollary}
+
+\begin{proof}
+The update is exactly a weighted max gate over predecessors \(u\). The preceding proposition realizes such a gate at a token. Applying the construction in parallel over \(v\) and stacking layers over \(t\) unrolls the bounded-horizon dynamic program.
+\end{proof}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[node distance=1.1cm, every node/.style={font=\small}, >=Latex]
+\node[box, minimum width=2.6cm] (x) {Euclidean hidden\\states \(X\)};
+\node[gbox, right=of x, minimum width=2.7cm] (val) {log-ReLU\\valuation \(\Phi\)};
+\node[gbox, right=of val, minimum width=2.8cm] (qkv) {max-plus\\\(Q,K,V\)};
+\node[obox, below=of qkv, minimum width=3.0cm] (hilbert) {Hilbert score\\\(S_{ij}=-d_H(q_i,k_j)\)};
+\node[obox, left=of hilbert, minimum width=3.2cm] (ctx) {max-plus context\\\(\max_j(S_{ij}+v_j)\)};
+\node[pbox, left=of ctx, minimum width=2.8cm] (out) {devaluation\\and output proj};
+\draw[edge] (x) -- (val);
+\draw[edge] (val) -- (qkv);
+\draw[edge] (qkv) -- (hilbert);
+\draw[edge] (hilbert) -- (ctx);
+\draw[edge] (ctx) -- (out);
+\draw[dedge] (out) -- ++(0,-0.8) -| node[pos=0.25, below] {residual block} (x);
+\end{tikzpicture}
+\caption{Multi-head Tropical Attention path used as an optional UGM backend. The attention kernel is max-plus; the surrounding residual, normalization, and feed-forward structure remains transformer-like.}
+\label{fig:mhta_backend}
+\end{figure}
+
+For UGM, the practical conclusion is a config-gated backend rather than a mandatory replacement. The default model remains a standard TokenGT-style transformer. The optional backend sets \texttt{model.attention\_backend=tropical}, uses masked Hilbert scores, supports causal and padding masks, logs \texttt{tropical\_attention/*} metrics, and is intended first for graph-reasoning ablations. This is important because the paper's empirical evidence is strongest for combinatorial reasoning and long/value/noise out-of-distribution tests; large autoregressive language and molecular graph training remain an experimental scaling question. The most useful first ablations are therefore: standard attention, standard attention with tropical logit diagnostics, full Multi-head Tropical Attention, Multi-head Tropical Attention plus topology diagnostics, and Multi-head Tropical Attention plus verifier/GFlowNet graph-of-thought rewards.
+
 \subsection{Tropical cells and persistent features}
 
 Tropical geometry and persistence are complementary. Tropical analysis describes the polyhedral cells induced by neural maps. Persistence describes topological features of point clouds or functions across scales. In a transformer layer, a set of input embeddings may be mapped through a sequence of smooth and piecewise-linear transformations. If attention is high-confidence, the map behaves like a selection over polyhedral regions. If MLPs are piecewise-linear approximated, the whole block partitions input space into cells.
@@ -2594,6 +2711,8 @@ For a point cloud of latent embeddings, thought-node states, graph-token states,
 \]
 and ReLU networks are piecewise affine over polyhedral regions. Tropical diagnostics track sharp region changes during graph decisions: selecting a motif, thought branch, tool call, verifier repair, SELFIES edit, or oracle-query action. A tropical regularizer can penalize unstable max selections under small input perturbations unless the verifier or oracle reward strongly supports a sharp transition.
 
+The current implementation separates two mechanisms that are easy to conflate. First, \texttt{tropical} training diagnostics rescale output logits and report entropy, top-1 margin, and confidence; this does not change the attention kernel. Second, \texttt{model.attention\_backend=tropical} activates a masked Multi-head Tropical Attention backend in the TokenGT encoder. That backend logs internal Hilbert-score statistics, distance means, max-selection confidence, argmax diversity, and tropical context scale. Because the intermediate tensor scales as \([B,H,S,S,d_h]\), the backend is an ablation tool for graph-reasoning and algorithmic tasks before it is a default long-context pretraining choice.
+
 \section{Sampling algorithms}
 
 \subsection{Random-order autoregressive sampling}
@@ -2681,7 +2800,7 @@ Stage & Name & Objective & Data \\
 1 & Text/graph pretraining & Random-order reconstruction of language graphs, code/math/science graphs, GoT/ToT traces. & FineWeb, Dolma, OpenWebMath, The Stack, synthetic verified traces. \\
 2 & Sequence pretraining & Protein, SELFIES, DNA, RNA reconstruction; motif prediction; cross-modal annotation. & UniProt, ChEMBL, PubChem, RNAcentral, Rfam, GenBank. \\
 3 & Graph-state reasoning & Treat reasoning as graph-state evolution with hidden continuous thoughts, nonlinear thought topology, and verifier records. & CoT/ToT/GoT traces, Lean/code tools, synthetic verified traces. \\
-4 & Topology/tropical ablation & Enable optional persistence, persistent-Laplacian, and tropical-selection diagnostics and regularizers. & Same as Stages 1--3, with held-out ablations. \\
+4 & Topology/tropical ablation & Enable optional persistence, persistent-Laplacian, tropical-selection diagnostics, and masked Multi-head Tropical Attention backend comparisons. & Same as Stages 1--3, with held-out ablations. \\
 5 & UMA temperature conditioning & Train continuous \(T\in[300,400]\,\mathrm K\) oracle-feedback records plus UMA-modulated attention-coupling and token-motion bins, using \(400\to300\,\mathrm K\) anchors as a curriculum scaffold. & Model-generated sequence-only candidates scored by UMA-style oracles and validators. \\
 6 & GFlowNet fine-tuning & Sample terminal graph states proportional to verifier and UMA-oracle reward, including coupling and motion-token trajectories. & Generated SELFIES/FASTA-grounded candidate graph states with oracle rewards. \\
 7 & Agentic science tuning & Tool-use traces for validation, repair, explanation, function annotation, and protocol generation. & Verified synthetic traces and curated tool logs. \\
@@ -2706,6 +2825,9 @@ for batch in dataloader:
     loss_attn = incidence_attention_kl(model.attention_maps, pairs)
     loss_id = identifier_collision_and_routing_loss(pairs)
     loss_top = optional_topology_tropical_loss(model.hidden_states, pairs)
+    if model.attention_backend == "tropical":
+        log_metrics(model.tropical_attention_metrics,
+                    names=["hilbert_distance", "selection_margin", "argmax_diversity"])
     loss = weighted_sum(loss_roa, loss_seq, loss_reason, loss_oracle, loss_gfn,
                         loss_attn, loss_id, loss_top)
     loss.backward(); optimizer.step(); optimizer.zero_grad()
@@ -3321,7 +3443,7 @@ L. Zhang, G. Naitzat, and L.-H. Lim. Tropical geometry of deep neural networks. 
 M.-C. Brandenburg et al. The real tropical geometry of neural networks. arXiv:2403.11871, 2024.
 
 \bibitem{HashemiTropicalAttention2025}
-B. Hashemi, K. Pasque, C. Teska, and R. Yoshida. Tropical attention: neural algorithmic reasoning for combinatorial algorithms. arXiv:2505.17190 / OpenReview, 2025.
+B. Hashemi, K. Pasque, C. Teska, and R. Yoshida. Tropical attention: neural algorithmic reasoning for combinatorial algorithms. \emph{NeurIPS}, 2025; arXiv:2505.17190v2.
 
 \bibitem{TransformerTropical2026}
 Y. Su and Y. Liu. Expressivity of transformers: a tropical geometry perspective. arXiv:2604.14727, 2026.

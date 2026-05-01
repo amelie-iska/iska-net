@@ -1,0 +1,22 @@
+model:
+  hidden_dim: 96
+  num_layers: 2
+  num_heads: 4
+  ffn_dim: 192
+  dropout: 0.1
+  max_seq_len: 192
+  max_nodes: 192
+  max_slots: 64
+  num_kinds: 8
+  endpoint_dim: 24
+  identifier_dim: 192
+  max_identifiers: 384
+  topology_dim: 7
+  attention_backend: tropical
+  tropical_use_projection: true
+  tropical_use_norm_shift: true
+  tropical_projective_normalize: true
+  tropical_symmetric: true
+  tropical_context_clamp: 12.0
+  tropical_score_floor: -10000.0
+  tropical_eps: 0.000001

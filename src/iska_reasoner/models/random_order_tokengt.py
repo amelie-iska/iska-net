@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 
 from iska_reasoner.models.numeric_diffusion import ConditionalNumericDiffusionHead
+from iska_reasoner.tropical import TropicalTransformerEncoder, TropicalTransformerEncoderLayer
 
 
 @dataclass
@@ -35,6 +36,14 @@ class RandomOrderTokenGTConfig:
     lora_alpha: float = 16.0
     lora_dropout: float = 0.0
     freeze_base_for_lora: bool = False
+    attention_backend: str = "standard"
+    tropical_use_projection: bool = True
+    tropical_use_norm_shift: bool = True
+    tropical_projective_normalize: bool = True
+    tropical_symmetric: bool = True
+    tropical_context_clamp: float = 20.0
+    tropical_score_floor: float = -10_000.0
+    tropical_eps: float = 1e-6
 
 
 class LoRALinear(nn.Module):
@@ -99,16 +108,36 @@ class RandomOrderTokenGT(nn.Module):
         if cfg.freeze_identifier_embeddings:
             self.identifier_embed.weight.requires_grad_(False)
 
-        layer = nn.TransformerEncoderLayer(
-            d_model=cfg.hidden_dim,
-            nhead=cfg.num_heads,
-            dim_feedforward=cfg.ffn_dim,
-            dropout=cfg.dropout,
-            activation="gelu",
-            batch_first=True,
-            norm_first=True,
-        )
-        self.encoder = nn.TransformerEncoder(layer, num_layers=cfg.num_layers)
+        backend = cfg.attention_backend.strip().lower()
+        if backend in {"standard", "softmax", "torch"}:
+            layer = nn.TransformerEncoderLayer(
+                d_model=cfg.hidden_dim,
+                nhead=cfg.num_heads,
+                dim_feedforward=cfg.ffn_dim,
+                dropout=cfg.dropout,
+                activation="gelu",
+                batch_first=True,
+                norm_first=True,
+            )
+            self.encoder = nn.TransformerEncoder(layer, num_layers=cfg.num_layers)
+        elif backend in {"tropical", "mhta", "tropical_attention"}:
+            layer = TropicalTransformerEncoderLayer(
+                hidden_dim=cfg.hidden_dim,
+                num_heads=cfg.num_heads,
+                ffn_dim=cfg.ffn_dim,
+                dropout=cfg.dropout,
+                norm_first=True,
+                use_projection=cfg.tropical_use_projection,
+                use_norm_shift=cfg.tropical_use_norm_shift,
+                projective_normalize=cfg.tropical_projective_normalize,
+                symmetric=cfg.tropical_symmetric,
+                context_clamp=cfg.tropical_context_clamp,
+                score_floor=cfg.tropical_score_floor,
+                eps=cfg.tropical_eps,
+            )
+            self.encoder = TropicalTransformerEncoder(layer, num_layers=cfg.num_layers)
+        else:
+            raise ValueError(f"Unknown attention_backend={cfg.attention_backend!r}; expected 'standard' or 'tropical'")
         self.norm = nn.LayerNorm(cfg.hidden_dim)
         self.lm_head = nn.Linear(cfg.hidden_dim, cfg.vocab_size, bias=False)
         self.value_head = nn.Linear(cfg.hidden_dim, 1)
@@ -222,6 +251,9 @@ class RandomOrderTokenGT(nn.Module):
         values = self.value_head(hidden).squeeze(-1)
         topology_pred = self.topology_head(hidden[:, 0])
         output = {"logits": logits, "hidden_states": hidden, "values": values, "topology_pred": topology_pred}
+        attention_metrics = getattr(self.encoder, "last_attention_metrics", None)
+        if attention_metrics:
+            output["attention_metrics"] = attention_metrics
         if labels is not None:
             loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), labels.reshape(-1), ignore_index=-100)
             with torch.no_grad():

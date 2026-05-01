@@ -20,6 +20,13 @@ model_repos:
     local_dir: data/external_repos/fairchem
     license: MIT
     notes: "Amelie Schreiber fork of FairChem. UGM uses this as the live FairChem/UMA oracle adapter source; UMA weights remain gated through Hugging Face facebook/UMA and are not downloaded by repo acquisition."
+  - name: tropical_attention
+    provider: github
+    repo_url: https://github.com/amelie-iska/Tropical-Attention.git
+    repo_type: reference_repo
+    local_dir: data/external_repos/Tropical-Attention
+    license: MIT
+    notes: "Amelie Schreiber fork of the NeurIPS 2025 Tropical Attention implementation. UGM keeps it as a reference source while using a native masked MHTA backend for training."
   - name: naturelm_8x7b_hf_checkpoint
     provider: hf_model
     repo_id: microsoft/NatureLM-8x7B

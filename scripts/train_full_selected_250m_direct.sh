@@ -15,12 +15,20 @@ DATA_CONFIG="${DATA_CONFIG:-config/data/real_full_selected_mix_250m.yaml}"
 CONTEXT_CONFIG="${CONTEXT_CONFIG:-config/generated/real_full_selected_context_2x.yaml}"
 TRAIN_CONFIG="${TRAIN_CONFIG:-config/train/real_full_selected_250m_local.yaml}"
 WANDB_CONFIG="${WANDB_CONFIG:-config/train/overrides/wandb_online.yaml}"
+ENABLE_TROPICAL_ATTENTION="${ENABLE_TROPICAL_ATTENTION:-0}"
+TROPICAL_ATTENTION_CONFIG="${TROPICAL_ATTENTION_CONFIG:-config/model/overrides/tropical_attention_backend.yaml}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/real_full_selected_250m_local}"
 VOCAB_PATH="${VOCAB_PATH:-$OUTPUT_DIR/vocab.jsonl}"
 
-FULL_TRAIN_BATCH_SIZE="${FULL_TRAIN_BATCH_SIZE:-6}"
-FULL_TRAIN_EVAL_BATCH_SIZE="${FULL_TRAIN_EVAL_BATCH_SIZE:-$FULL_TRAIN_BATCH_SIZE}"
-FULL_TRAIN_GRAD_ACCUM="${FULL_TRAIN_GRAD_ACCUM:-6}"
+if [[ "$ENABLE_TROPICAL_ATTENTION" == "1" ]]; then
+  FULL_TRAIN_BATCH_SIZE="${FULL_TRAIN_BATCH_SIZE:-1}"
+  FULL_TRAIN_EVAL_BATCH_SIZE="${FULL_TRAIN_EVAL_BATCH_SIZE:-$FULL_TRAIN_BATCH_SIZE}"
+  FULL_TRAIN_GRAD_ACCUM="${FULL_TRAIN_GRAD_ACCUM:-36}"
+else
+  FULL_TRAIN_BATCH_SIZE="${FULL_TRAIN_BATCH_SIZE:-6}"
+  FULL_TRAIN_EVAL_BATCH_SIZE="${FULL_TRAIN_EVAL_BATCH_SIZE:-$FULL_TRAIN_BATCH_SIZE}"
+  FULL_TRAIN_GRAD_ACCUM="${FULL_TRAIN_GRAD_ACCUM:-6}"
+fi
 FULL_TRAIN_MAX_STEPS="${FULL_TRAIN_MAX_STEPS:-full_epoch}"
 FULL_TRAIN_EPOCHS="${FULL_TRAIN_EPOCHS:-1.0}"
 FULL_TRAIN_EVAL_EVERY="${FULL_TRAIN_EVAL_EVERY:-10000}"
@@ -40,7 +48,11 @@ export CUDA_DEVICE_ORDER="${CUDA_DEVICE_ORDER:-PCI_BUS_ID}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 export WANDB_PROJECT="${WANDB_PROJECT:-iska-ugm}"
 export WANDB_GROUP="${WANDB_GROUP:-direct-250m}"
-export WANDB_TAGS="${WANDB_TAGS:-direct,phase1,tokengt,4090,250m}"
+if [[ "$ENABLE_TROPICAL_ATTENTION" == "1" ]]; then
+  export WANDB_TAGS="${WANDB_TAGS:-direct,phase1,tokengt,4090,250m,tropical-attention,mhta}"
+else
+  export WANDB_TAGS="${WANDB_TAGS:-direct,phase1,tokengt,4090,250m}"
+fi
 
 for path in "$MODEL_CONFIG" "$DATA_CONFIG" "$CONTEXT_CONFIG" "$TRAIN_CONFIG" "$WANDB_CONFIG"; do
   if [[ ! -f "$path" ]]; then
@@ -48,6 +60,10 @@ for path in "$MODEL_CONFIG" "$DATA_CONFIG" "$CONTEXT_CONFIG" "$TRAIN_CONFIG" "$W
     exit 1
   fi
 done
+if [[ "$ENABLE_TROPICAL_ATTENTION" == "1" && ! -f "$TROPICAL_ATTENTION_CONFIG" ]]; then
+  printf 'Tropical Attention requested but config not found: %s\n' "$TROPICAL_ATTENTION_CONFIG" >&2
+  exit 1
+fi
 if [[ ! -s "$VOCAB_PATH" ]]; then
   printf 'Expected existing vocab at %s. Run the full wrapper once, or set VOCAB_PATH to a built vocab.\n' "$VOCAB_PATH" >&2
   exit 1
@@ -88,6 +104,7 @@ YAML
 
 printf '[%s] Direct 250M phase-1 training\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 printf 'Run directory: %s\n' "$RUN_DIR"
+printf 'Tropical Attention: enabled=%s config=%s\n' "$ENABLE_TROPICAL_ATTENTION" "$TROPICAL_ATTENTION_CONFIG"
 printf 'Override:\n'
 cat "$OVERRIDE"
 
@@ -96,10 +113,16 @@ if [[ "${DRY_RUN:-0}" == "1" ]]; then
   exit 0
 fi
 
-exec conda run --no-capture-output -n "$CONDA_ENV" python scripts/train_stage.py \
-  --config "$MODEL_CONFIG" \
-  --config "$DATA_CONFIG" \
-  --config "$CONTEXT_CONFIG" \
-  --config "$TRAIN_CONFIG" \
-  --config "$OVERRIDE" \
-  --config "$WANDB_CONFIG"
+CONFIG_ARGS=(
+  --config "$MODEL_CONFIG"
+  --config "$DATA_CONFIG"
+  --config "$CONTEXT_CONFIG"
+  --config "$TRAIN_CONFIG"
+  --config "$OVERRIDE"
+)
+if [[ "$ENABLE_TROPICAL_ATTENTION" == "1" ]]; then
+  CONFIG_ARGS+=(--config "$TROPICAL_ATTENTION_CONFIG")
+fi
+CONFIG_ARGS+=(--config "$WANDB_CONFIG")
+
+exec conda run --no-capture-output -n "$CONDA_ENV" python scripts/train_stage.py "${CONFIG_ARGS[@]}"

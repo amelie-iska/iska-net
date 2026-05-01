@@ -217,6 +217,13 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
     model_cfg = dict(cfg["model"])
     model_cfg["vocab_size"] = len(vocab.token_to_id)
     model = RandomOrderTokenGT(RandomOrderTokenGTConfig(**model_cfg))
+    logger.info(
+        "Model attention backend: %s tropical_projection=%s tropical_norm_shift=%s tropical_projective_normalize=%s",
+        model.cfg.attention_backend,
+        model.cfg.tropical_use_projection,
+        model.cfg.tropical_use_norm_shift,
+        model.cfg.tropical_projective_normalize,
+    )
     device = get_device(cfg["run"].get("device", "cuda"))
     model.to(device)
     trainable_params = [param for param in model.parameters() if param.requires_grad]
@@ -361,6 +368,8 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
                 "numeric_diffusion_loss": out.get("numeric_diffusion_loss", torch.tensor(0.0, device=device)).item(),
                 "tropical/temperature": step_temp,
             }
+            for key, value in out.get("attention_metrics", {}).items():
+                metrics[key] = value.item() if torch.is_tensor(value) else value
             metrics.update(logit_diagnostics(out["logits"], batch["labels"], temperature=step_temp))
             topo = batch.get("topology_features")
             if topo is not None:
@@ -395,7 +404,10 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
                 optimizer.zero_grad(set_to_none=True)
                 step += 1
                 pbar.update(1)
-                pbar.set_postfix(loss=f"{out['loss'].item():.4f}", acc=f"{out['token_accuracy'].item():.3f}")
+                postfix = {"loss": f"{out['loss'].item():.4f}", "acc": f"{out['token_accuracy'].item():.3f}"}
+                if "tropical_attention/top1_margin" in metrics:
+                    postfix["trop_margin"] = f"{metrics['tropical_attention/top1_margin']:.3f}"
+                pbar.set_postfix(**postfix)
 
                 if step % log_every == 0:
                     metrics = avg.compute(prefix=f"{stage}/train/")
