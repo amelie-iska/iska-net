@@ -17,6 +17,8 @@ TRAIN_CONFIG="${TRAIN_CONFIG:-config/train/real_full_selected_250m_local.yaml}"
 WANDB_CONFIG="${WANDB_CONFIG:-config/train/overrides/wandb_online.yaml}"
 ENABLE_TROPICAL_ATTENTION="${ENABLE_TROPICAL_ATTENTION:-0}"
 TROPICAL_ATTENTION_CONFIG="${TROPICAL_ATTENTION_CONFIG:-config/model/overrides/hybrid_flash_mhta_backend.yaml}"
+ENABLE_UMA_COORDINATE_HEAD="${ENABLE_UMA_COORDINATE_HEAD:-0}"
+UMA_COORDINATE_HEAD_CONFIG="${UMA_COORDINATE_HEAD_CONFIG:-config/train/overrides/uma_coordinate_head.yaml}"
 EXTRA_TRAIN_CONFIGS="${EXTRA_TRAIN_CONFIGS:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/real_full_selected_250m_local}"
 VOCAB_PATH="${VOCAB_PATH:-$OUTPUT_DIR/vocab.jsonl}"
@@ -67,6 +69,17 @@ if [[ "$ENABLE_TROPICAL_ATTENTION" == "1" && ! -f "$TROPICAL_ATTENTION_CONFIG" ]
   printf 'Tropical Attention requested but config not found: %s\n' "$TROPICAL_ATTENTION_CONFIG" >&2
   exit 1
 fi
+if [[ "$ENABLE_UMA_COORDINATE_HEAD" == "1" ]]; then
+  if [[ ! -f "$UMA_COORDINATE_HEAD_CONFIG" ]]; then
+    printf 'UMA coordinate head requested but config not found: %s\n' "$UMA_COORDINATE_HEAD_CONFIG" >&2
+    exit 1
+  fi
+  EXTRA_TRAIN_CONFIGS="${EXTRA_TRAIN_CONFIGS:+$EXTRA_TRAIN_CONFIGS }$UMA_COORDINATE_HEAD_CONFIG"
+  case ",$WANDB_TAGS," in
+    *,uma-coordinate-head,*) ;;
+    *) export WANDB_TAGS="$WANDB_TAGS,uma-coordinate-head,uma-force-dynamics" ;;
+  esac
+fi
 if [[ -n "$EXTRA_TRAIN_CONFIGS" ]]; then
   for path in $EXTRA_TRAIN_CONFIGS; do
     if [[ ! -f "$path" ]]; then
@@ -116,6 +129,7 @@ YAML
 printf '[%s] Direct 250M phase-1 training\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 printf 'Run directory: %s\n' "$RUN_DIR"
 printf 'Tropical Attention: enabled=%s config=%s\n' "$ENABLE_TROPICAL_ATTENTION" "$TROPICAL_ATTENTION_CONFIG"
+printf 'UMA coordinate head: enabled=%s config=%s\n' "$ENABLE_UMA_COORDINATE_HEAD" "$UMA_COORDINATE_HEAD_CONFIG"
 printf 'Extra configs: %s\n' "${EXTRA_TRAIN_CONFIGS:-<none>}"
 printf 'Context config: %s\n' "$CONTEXT_CONFIG"
 printf 'Override:\n'

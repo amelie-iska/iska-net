@@ -33,6 +33,15 @@ class GraphVocab:
         inv = self.id_to_token
         return inv.get(int(idx), "<UNK>")
 
+    def extend(self, tokens: Iterable[str]) -> int:
+        added = 0
+        for token in tokens:
+            tok = str(token)
+            if tok and tok not in self.token_to_id:
+                self.token_to_id[tok] = len(self.token_to_id)
+                added += 1
+        return added
+
     @property
     def id_to_token(self) -> dict[int, str]:
         return {idx: tok for tok, idx in self.token_to_id.items()}

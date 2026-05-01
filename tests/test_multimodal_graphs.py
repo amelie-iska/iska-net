@@ -23,6 +23,7 @@ from iska_reasoner.data.vocab import build_vocab
 from iska_reasoner.graph.orders import build_orders, oracle_enabling_order, scientific_graph_order
 from iska_reasoner.models.random_order_tokengt import RandomOrderTokenGT, RandomOrderTokenGTConfig
 from iska_reasoner.tools import multimodal_metrics_for_example, multimodal_oracle_reward, verify_example_tokens
+from iska_reasoner.training.uma_coordinate import uma_coordinate_head_oracle_loss
 
 
 def _row():
@@ -300,6 +301,106 @@ def test_coordinate_head_forward_backward_on_structure_batch():
     assert torch.isfinite(out["coordinate_loss"])
     total = out["loss"] + 0.1 * out["coordinate_loss"]
     total.backward()
+    grad_norm = sum(
+        param.grad.detach().abs().sum().item()
+        for name, param in model.named_parameters()
+        if name.startswith("coordinate_head") and param.grad is not None
+    )
+    assert grad_norm > 0.0
+
+
+def test_uma_coordinate_queries_come_from_protein_sequence_without_structure_labels():
+    ex = graphify_multimodal(
+        {
+            "task": "structure_dynamics_proxy",
+            "protein_sequence": "MKT",
+            "temperature": 340.0,
+            "oracle": {"name": "uma"},
+        },
+        9,
+        "local_multimodal_graph_to_graph",
+    )
+    assert not graph_structure_violations(ex)
+    vocab = build_vocab([ex], extra_tokens=multimodal_reference_tokens())
+    collator = RandomOrderCollator(
+        vocab,
+        max_source_tokens=48,
+        max_target_tokens=32,
+        max_seq_len=128,
+        max_uma_coordinate_atoms=8,
+        order_mode="first",
+    )
+    batch = collator([ex])
+    assert batch["uma_coordinate_query_mask"].sum().item() == 8
+    assert batch["uma_coordinate_symbols"][0][:4] == ["N", "C", "C", "O"]
+    assert batch["coordinate_mask"].sum().item() == 0
+
+
+def test_uma_coordinate_head_proxy_loss_backprops_through_coordinate_readout():
+    ex = graphify_multimodal(
+        {
+            "task": "structure_dynamics_proxy",
+            "protein_sequence": "MKT",
+            "temperature": 340.0,
+            "oracle": {"name": "uma"},
+        },
+        10,
+        "local_multimodal_graph_to_graph",
+    )
+    vocab = build_vocab([ex], extra_tokens=multimodal_reference_tokens())
+    collator = RandomOrderCollator(
+        vocab,
+        max_source_tokens=48,
+        max_target_tokens=32,
+        max_seq_len=128,
+        max_uma_coordinate_atoms=8,
+        order_mode="first",
+    )
+    batch = collator([ex])
+    cfg = RandomOrderTokenGTConfig(
+        vocab_size=len(vocab.token_to_id),
+        hidden_dim=48,
+        num_layers=1,
+        num_heads=4,
+        ffn_dim=96,
+        max_seq_len=128,
+        max_nodes=128,
+        max_slots=64,
+        endpoint_dim=16,
+        identifier_dim=16,
+        coordinate_head_enabled=True,
+        coordinate_target_scale=10.0,
+    )
+    model = RandomOrderTokenGT(cfg)
+    out = model(
+        input_ids=batch["input_ids"],
+        kind_ids=batch["kind_ids"],
+        slot_ids=batch["slot_ids"],
+        endpoint_ids=batch["endpoint_ids"],
+        identifier_ids=batch["identifier_ids"],
+        source_numeric_features=batch["source_numeric_features"],
+        attention_mask=batch["attention_mask"],
+        causal_mask=batch["causal_mask"],
+        labels=batch["labels"],
+        coordinate_targets=batch["coordinate_targets"],
+        coordinate_mask=batch["coordinate_mask"],
+    )
+    loss, metrics = uma_coordinate_head_oracle_loss(
+        out["coordinate_mean"],
+        batch["uma_coordinate_query_mask"],
+        batch["uma_coordinate_symbols"],
+        batch["examples"],
+        backend="proxy",
+        max_examples=1,
+        max_atoms=8,
+        dynamics_steps=2,
+        force_step_size=0.05,
+    )
+    assert torch.isfinite(loss)
+    assert metrics["uma_coordinate/oracle_examples"] == 1.0
+    assert metrics["uma_coordinate/dynamics_steps"] == 2.0
+    assert metrics["uma_coordinate/force_rms_ev_per_a"] > 0.0
+    loss.backward()
     grad_norm = sum(
         param.grad.detach().abs().sum().item()
         for name, param in model.named_parameters()

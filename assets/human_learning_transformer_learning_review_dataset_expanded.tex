@@ -81,7 +81,7 @@
 \maketitle
 
 \begin{abstract}
-This manuscript reviews human learning at the level of neurons, synapses, gap junctions, astrocytic coupling, and molecular plasticity, then compares those mechanisms to modern transformer systems whose learning, memory, and reasoning are distributed across parameter matrices, contextual key-value caches, embedding trajectories, and external agentic control loops. The aim is not to claim that transformers are brains. The aim is to isolate which analogies are mathematically useful, which are loose metaphors, and which are false. The central constructive thesis is that language and scientific reasoning should be treated as graph-structured information, not only as strings. Tokenized Graph Transformer (TokenGT) style representations provide a clean way to feed nodes, edges, morphemes, semantic roles, dependency arcs, SELFIES tokens, biological sequence tokens, tool observations, and latent thought states into a standard transformer backbone. Persistent homology and persistent Laplacians then supply multiscale diagnostics of the resulting embedding geometry; tropical geometry supplies a complementary view in which ReLU and zero-temperature attention maps form piecewise-linear or max-plus polyhedral maps; and looped latent reasoning supplies a dynamical systems view of inference-time computation. The document develops the required mathematics, physics, and biochemistry, states definitions and theorems, gives proof sketches or complete proofs where appropriate, and proposes a research program for TokenGT-based latent graph-state reasoning with topological and tropical regularization. All diagrams are original schematics; no copyrighted figure from a source paper is reproduced. This revised version also turns the theoretical comparison into an engineering program: it specifies sub-15B TokenGT-style reasoning agents, datasets, random-order graph decoding, verifier-guided graph-of-thought and tree-of-thought training, GFlowNet-style trajectory learning, Lean-based proof checking, code and tool-use validation, and biochemistry/medicine-design evaluation protocols. It further develops a random-order multimodal TokenGT-only graph-to-graph scientific architecture, \UGM, the Universal Graph Model, rather than a sequence-only protein model. The current training curriculum is explicitly sequence-first: molecular training uses SELFIES/SMILES-style molecular sequences and protein/DNA/RNA sequence records, while actual structure files, conformational trajectories, direct dynamics data, and supervised physics targets are excluded from training. Optional string-derived geometric descriptors may be added later as features, but this feature is off by default and does not admit PDB/mmCIF/SDF/trajectory-derived supervision. UMA-style models are used as external oracles, validators, and reward functions for graph-state policies rather than as sources of direct energy/force-label training. Throughout the revised architecture, the primary target is an output graph: textual answers, SELFIES strings, proof traces, tool traces, thought graphs, and oracle-scored candidate records are serializations or renderings of typed graph states, not separate graph-to-sequence heads.
+This manuscript reviews human learning at the level of neurons, synapses, gap junctions, astrocytic coupling, and molecular plasticity, then compares those mechanisms to modern transformer systems whose learning, memory, and reasoning are distributed across parameter matrices, contextual key-value caches, embedding trajectories, and external agentic control loops. The aim is not to claim that transformers are brains. The aim is to isolate which analogies are mathematically useful, which are loose metaphors, and which are false. The central constructive thesis is that language and scientific reasoning should be treated as graph-structured information, not only as strings. Tokenized Graph Transformer (TokenGT) style representations provide a clean way to feed nodes, edges, morphemes, semantic roles, dependency arcs, SELFIES tokens, biological sequence tokens, tool observations, and latent thought states into a standard transformer backbone. Persistent homology and persistent Laplacians then supply multiscale diagnostics of the resulting embedding geometry; tropical geometry supplies a complementary view in which ReLU and zero-temperature attention maps form piecewise-linear or max-plus polyhedral maps; and looped latent reasoning supplies a dynamical systems view of inference-time computation. The document develops the required mathematics, physics, and biochemistry, states definitions and theorems, gives proof sketches or complete proofs where appropriate, and proposes a research program for TokenGT-based latent graph-state reasoning with topological and tropical regularization. All diagrams are original schematics; no copyrighted figure from a source paper is reproduced. This revised version also turns the theoretical comparison into an engineering program: it specifies sub-15B TokenGT-style reasoning agents, datasets, random-order graph decoding, verifier-guided graph-of-thought and tree-of-thought training, GFlowNet-style trajectory learning, Lean-based proof checking, code and tool-use validation, and biochemistry/medicine-design evaluation protocols. It further develops a random-order multimodal TokenGT-only graph-to-graph scientific architecture, \UGM, the Universal Graph Model, rather than a sequence-only protein model. The current training curriculum is explicitly sequence-first: molecular training uses SELFIES/SMILES-style molecular sequences and protein/DNA/RNA sequence records, while actual structure files, conformational trajectories, direct dynamics data, and supervised physics targets are excluded from training. Optional string-derived geometric descriptors may be added later as features, but this feature is off by default and does not admit PDB/mmCIF/SDF/trajectory-derived supervision. UMA-style models are used as external oracles, validators, reward functions, and optional force-feedback evaluators for model-generated candidate coordinates rather than as sources of copied structure-file energy/force labels. Throughout the revised architecture, the primary target is an output graph: textual answers, SELFIES strings, proof traces, tool traces, thought graphs, generated coordinate hypotheses, and oracle-scored candidate records are serializations or renderings of typed graph states, not separate graph-to-sequence heads.
 \end{abstract}
 
 \tableofcontents
@@ -2290,7 +2290,7 @@ The following integrated extension corrects two limitations at once: treating th
 
 The preceding sections argued that language, memory, and reasoning can be treated as graph-structured information moving through latent dynamical systems. This paper makes that thesis concrete in a molecular setting. The proposed model receives arbitrary mixtures of natural language, protein sequence, SELFIES/SMILES, DNA, and RNA. It converts the mixture into an input typed graph; performs reasoning, candidate construction, verifier interaction, and tool use as graph completion; and decodes an output typed graph. Text answers, SELFIES renderings, Lean scripts, tool transcripts, thought graphs, and oracle-feedback records are obtained only by flattening the output graph. Natural-language requests, residues, bases, SELFIES symbols, motif memberships, thought nodes, tool calls, verifier observations, and UMA reward bins are all records in one graph grammar.
 
-The architectural rule is intentionally restrictive and is now embedded into the longer comparative paper rather than treated as a detached proposal. A protein residue is not sent to a protein module. A SELFIES string is not sent to a chemistry module. Coordinates are not generated by an equivariant coordinate head in the first curriculum, though an optional masked continuous coordinate head is available for a later explicitly enabled structure phase. There is no separate AlphaFold-style pairformer and no learned VQ structure alphabet as the final target. The transformer is a TokenGT-style graph-to-graph model over node, edge, hyperedge, thought, tool, oracle, and attribute records. The allowed changes are: vocabulary augmentation; graph-record serialization as an implementation detail rather than a mathematical output type; random-order autoregressive graph decoding; conditioning tokens for temperature, modality, units, and task; and auxiliary losses that judge whether the decoded output graph is valid, verified, and oracle-supported.
+The architectural rule is intentionally restrictive and is now embedded into the longer comparative paper rather than treated as a detached proposal. A protein residue is not sent to a protein module. A SELFIES string is not sent to a chemistry module. Coordinates are not supervised by an equivariant coordinate dataset in the first curriculum, though an optional continuous coordinate readout can propose candidate positions that are scored by UMA energy/force feedback. There is no separate AlphaFold-style pairformer and no learned VQ structure alphabet as the final target. The transformer is a TokenGT-style graph-to-graph model over node, edge, hyperedge, thought, tool, oracle, and attribute records. The allowed changes are: vocabulary augmentation; graph-record serialization as an implementation detail rather than a mathematical output type; random-order autoregressive graph decoding; conditioning tokens for temperature, modality, units, and task; and auxiliary losses that judge whether the decoded output graph is valid, verified, and oracle-supported.
 
 \begin{figure}[H]
 \centering
@@ -2412,7 +2412,7 @@ Protein motifs & PROSITE/InterPro motifs, CATH/3Di-derived sequence-motif vocabu
 SELFIES chemistry & standard SELFIES tokens, ring/branch markers, charge/stereo tokens, Group-SELFIES-like fragments, pharmacophore motifs & Robust molecular graph input and fragment-level compression. \\
 DNA/RNA & bases, ambiguity symbols, Rfam-family tokens, covariance-family tokens, sequence-derived loop/helix motif tokens, modified-base sequence tags & Nucleic-acid sequence reasoning and annotation without direct 3D structure supervision. \\
 Optional geometry features & string-derived descriptors, ring counts, molecular weight, TPSA, logP, rotatable-bond count & Off by default; no structure-file training. \\
-Oracle/verifier & UMA validity/reward bins, temperature-conditioned score bins, tool status, repair hints, verifier confidence & External scoring and GFlowNet rewards, not direct energy/force-label training. \\
+Oracle/verifier & UMA validity/reward bins, temperature-conditioned score bins, optional generated-coordinate force feedback, tool status, repair hints, verifier confidence & External scoring, force-feedback surrogates, and GFlowNet rewards, not copied structure-file energy/force labels. \\
 Attention/coupling/motion & Stage-specific 64-bin attention-coupling records, UMA-influence records, token-coupling records, token-motion and trajectory-proxy records & Routing and graph-state evolution supervision for the UMA sequence-to-structure-dynamics proxy stage only. \\
 \bottomrule
 
@@ -2519,11 +2519,34 @@ The coordinate and frame decoder is autoregressive. It emits candidate atom, bon
 \]
 where \(f\) is a frame index, \(i\) is an atom or residue-associated atom slot, \(u\in\{x,y,z\}\) is the coordinate axis, and \(b\) is a signed coordinate bin such as \(\texttt{neg\_mid}\), \(\texttt{zero}\), or \(\texttt{pos\_near}\). The renderer may map the three axis-bin records for a fixed \((f,i)\) to a representative coordinate or interval. This design keeps generated positions in the same random-order conditional law as text, proof, SELFIES, tool, oracle, atom, and bond records.
 
-The codebase now also contains an optional continuous coordinate head for a later explicitly enabled structure phase. It is disabled in the sequence-first full run. Let \(q\) be a \(\texttt{<POS>}\) query slot whose symbolic target is a coordinate record. The transformer hidden state \(h_q\) is mapped to
+The codebase now also contains an optional continuous coordinate head. In the active sequence-first oracle path this head is not trained from copied structure labels. Instead, source-side \(\texttt{UMA\_COORD\_QUERY}\) slots are derived from sequence or string records: for proteins a bounded coarse backbone list \((N,C,C,O)\) is created per residue up to the configured cap, and for SELFIES/SMILES molecules atom symbols are read from the molecular string parser. These slots ask the graph reasoner to propose candidate coordinates. The coordinate head is therefore a readout from the same embedding-space graph-of-thought state that supports text, proof, tool, contact, and oracle records; it is not a separate structure predictor that bypasses latent GoT computation.
+
+Let \(q\) be a coordinate-query or coordinate-record slot. The transformer hidden state \(h_q\) is mapped to
 \[
   (\mu_q,\ell_q)=H_{\rm coord}(h_q)\in\mathbb R^3\times\mathbb R^3,
 \]
-where \(\mu_q\) is a normalized mean coordinate and \(\ell_q\) is a clipped log-variance vector. If \(y_q\in\mathbb R^3\) is an available coordinate target, \(m_q\in\{0,1\}^3\) is the axis mask, and \(s>0\) is a coordinate scale, the masked coordinate loss is
+where \(\mu_q\) is a normalized mean coordinate and \(\ell_q\) is a clipped log-variance vector. The implemented UMA force-feedback loss uses the mean coordinate \(x_q=s\mu_q\) for generated candidates and keeps supervised coordinate likelihood disabled. For a candidate atom list \(a_1,\ldots,a_n\), proposed positions \(x_t=(x_{t,1},\ldots,x_{t,n})\), and continuous graph temperature \(T\), UMA returns an energy and forces
+\[
+  E_t = E_{\mathrm{UMA}}(a_{1:n},x_t,T),
+  \qquad
+  F_t=-\nabla_x E_{\mathrm{UMA}}(a_{1:n},x_t,T).
+\]
+The oracle is external and is treated as a stop-gradient evaluator. A force-alignment surrogate is
+\[
+  \mathcal L_{\mathrm{UMA\mbox{-}coord}}
+  =
+  -\frac1n\sum_{t=0}^{K-1}\sum_{i=1}^n
+  \left\langle \operatorname{sg}(F_{t,i}), x_{t,i}\right\rangle
+  +\lambda_c\left\|\frac1n\sum_i x_{0,i}\right\|^2
+  +\lambda_r\frac{1}{|\mathcal P|}\sum_{i<j}\max(0,r_{\min}-\|x_{0,i}-x_{0,j}\|)^2 .
+\]
+Here \(\operatorname{sg}\) denotes stop-gradient. Gradient descent on the first term moves \(x_{t,i}\) in the UMA force direction. The rollout
+\[
+  x_{t+1}=x_t+\eta\,\operatorname{sg}(F_t)
+\]
+turns reasoning iterations into a short physical-time discretization: the model proposes a geometry, the oracle scores it at the graph temperature, the generated coordinates are advanced by detached forces, and the next score is logged and trained. Low-temperature examples emphasize stabilization and refinement; high-temperature examples preserve broader contact and coordinate support when combined with the contact-entropy and GFlowNet diversity terms. The gradients still flow through \(H_{\rm coord}(h_q)\) into the hidden embeddings, attention/contact maps, and graph-state reasoning layers, so the mechanism maintains embedding-space GoT reasoning rather than replacing it with a coordinate-only model.
+
+For completeness, a future supervised structure phase could use the same head with masked Gaussian likelihood. If \(y_q\in\mathbb R^3\) is an available coordinate target, \(m_q\in\{0,1\}^3\) is the axis mask, and \(s>0\) is a coordinate scale, the masked coordinate loss would be
 \[
   \mathcal L_{\rm coord}
   =
@@ -2537,9 +2560,9 @@ where \(\mu_q\) is a normalized mean coordinate and \(\ell_q\) is a clipped log-
     \left(\frac{y_{q,u}}{s}-\mu_{q,u}\right)^2\exp(-\ell_{q,u})
   \right].
 \]
-Only coordinate-bearing graph-token positions have nonzero mask. Thus the symbolic autoregressive decoder still decides which coordinate record exists and what frame, atom slot, and axis it names; the coordinate head supplies a continuous refinement and uncertainty estimate for that already named graph record.
+Only coordinate-bearing graph-token positions have nonzero mask. Thus the symbolic autoregressive decoder still decides which coordinate record exists and what frame, atom slot, and axis it names; the coordinate head supplies a continuous refinement and uncertainty estimate for that already named graph record. In the current UMA path this supervised likelihood has weight zero.
 
-\begin{proposition}[Coordinate-head consistency under Gaussian supervision]
+\begin{proposition}[Disabled Gaussian coordinate-supervision reference]
 Assume a structure phase supplies samples \((X,Y,M)\), where \(X\) is the input and partial output graph state, \(Y\) is a continuous coordinate target, and \(M\) is an axis mask. Among all measurable coordinate heads with diagonal Gaussian outputs, minimizing the expected masked negative log likelihood above recovers the conditional masked mean and variance:
 \[
   \mu^*(X)=\mathbb E[Y/s\mid X,M=1],
@@ -2625,7 +2648,7 @@ Write the symmetrized graph-to-graph likelihood as an expectation under $q$ and 
 
 \subsection{Three generation views}
 
-Random-order autoregression is the active implementation path. A policy chooses the next missing record and samples it from the same TokenGT conditional distribution used for every output record. Masked discrete diffusion and discrete flow matching remain theoretical comparison points and possible future ablations for categorical graph completion; they are not used as active losses in the present training code. In the first sequence-only run, generated structure positions are represented only as autoregressive coordinate graph tokens. In a later explicitly enabled structure phase, the optional coordinate head may add the masked Gaussian coordinate loss above for coordinate-bearing \(\texttt{<POS>}\) slots without changing the primary graph-token decoder.
+Random-order autoregression is the active implementation path. A policy chooses the next missing record and samples it from the same TokenGT conditional distribution used for every output record. Masked discrete diffusion and discrete flow matching remain theoretical comparison points and possible future ablations for categorical graph completion; they are not used as active losses in the present training code. In the sequence-first UMA run, generated structure positions are represented by autoregressive coordinate graph tokens and by optional coordinate-query readouts trained through UMA force feedback on model-generated candidates. Supervised masked Gaussian coordinate loss remains available as a disabled reference objective and is not part of the default structure-file-free curriculum.
 
 \begin{lstlisting}[caption={Random-order graph training step.}]
 def training_step(example):
@@ -2653,6 +2676,8 @@ For a candidate molecular graph state \(Y_G\), an UMA-style oracle can return a 
 \]
 where \(\beta_T=(k_BT)^{-1}\) and \(\widehat E_{\rm oracle}\) is an oracle-provided score for a candidate graph, not a supervised training label extracted from an actual structure file. UMA is called with the same continuous \(T\) that is encoded in the graph state, so temperature changes the oracle score rather than merely labeling the example. The model conditions on \(T\) and learns which graph-state actions tend to receive higher oracle reward at different temperatures.
 
+When the coordinate readout is enabled, the oracle call can also return forces on the model's own generated coordinates. These forces are not labels from a training set; they are feedback from evaluating the current candidate. The same temperature \(T\) controls both the graph-state policy and the oracle force evaluation. Thus higher \(T\) affects two coupled objects: the embedding/contact trajectory should maintain more conformational alternatives, and the generated coordinate rollout should sample broader motion before selection. Lower \(T\) should concentrate both contact maps and coordinate updates around more stable refinements.
+
 \begin{lstlisting}[caption={Continuous-temperature UMA-oracle graph-state curriculum.}]
 def sample_temperature_schedule(anchors=[400,375,350,325,300],
                                 jitter_k=6.0,
@@ -2668,6 +2693,9 @@ def build_temperature_conditioned_trace(input_graph):
             action = policy.sample(G)
             G_next = apply_graph_state_action(G, action)
             oracle = UMA_oracle_score(G_next, temperature=T)
+            if G_next.has_generated_coordinates():
+                forces = UMA_force_feedback(G_next.coordinates, temperature=T)
+                G_next = G_next.with_force_guided_coordinate_rollout(forces)
             traces.append((G, action, G_next, T, oracle.reward_bin))
             G = repair_or_continue(G_next, oracle)
     return traces
@@ -2867,7 +2895,7 @@ Stage & Name & Objective & Data \\
 2 & Sequence pretraining & Protein, SELFIES, DNA, RNA reconstruction; motif prediction; cross-modal annotation. & UniProt, ChEMBL, PubChem, RNAcentral, Rfam, GenBank. \\
 3 & Graph-state reasoning & Treat reasoning as graph-state evolution with hidden continuous thoughts, nonlinear thought topology, and verifier records. & CoT/ToT/GoT traces, Lean/code tools, synthetic verified traces. \\
 4 & Topology/tropical ablation & Enable optional persistence, persistent-Laplacian, tropical-selection diagnostics, and masked Multi-head Tropical Attention backend comparisons. & Same as Stages 1--3, with held-out ablations. \\
-5 & UMA temperature conditioning & Train continuous \(T\in[300,400]\,\mathrm K\) oracle-feedback records plus UMA-modulated attention-coupling and token-motion bins, using \(400\to300\,\mathrm K\) anchors as a curriculum scaffold. & Model-generated sequence-only candidates scored by UMA-style oracles and validators. \\
+5 & UMA temperature conditioning & Train continuous \(T\in[300,400]\,\mathrm K\) oracle-feedback records plus UMA-modulated attention-coupling, token-motion bins, and optional force-feedback coordinate rollouts, using \(400\to300\,\mathrm K\) anchors as a curriculum scaffold. & Model-generated sequence-only candidates and generated coordinates scored by UMA-style oracles and validators. \\
 6 & GFlowNet fine-tuning & Sample terminal graph states proportional to verifier and UMA-oracle reward, including coupling and motion-token trajectories. & Generated SELFIES/FASTA-grounded candidate graph states with oracle rewards. \\
 7 & Agentic science tuning & Tool-use traces for validation, repair, explanation, function annotation, and protocol generation. & Verified synthetic traces and curated tool logs. \\
 \multicolumn{4}{p{0.77\linewidth}}{\textbf{Evaluation-only:} PDB, AlphaFold DB, NAKB, RNA 3D Hub, GEOM, SPICE, ATLAS, mdCATH, and related structure/dynamics sources are reserved for leakage audits and validation until a later explicit phase permits structure-file training.} \\
@@ -2883,9 +2911,14 @@ for batch in dataloader:
     loss_roa = random_order_graph_to_graph_nll(model, pairs, orders)
     loss_seq = sequence_record_loss(pairs) + motif_loss(pairs)
     loss_reason = thought_graph_transition_loss(pairs) + verifier_record_loss(pairs)
+    loss_oracle = 0.0; loss_uma_coord = 0.0; loss_gfn = 0.0
     if has_oracle_feedback(batch):
         loss_oracle = oracle_reward_bin_loss(pairs) + temperature_conditioning_loss(pairs)
         loss_oracle += uma_coupling_bin_loss(pairs) + uma_token_motion_loss(pairs)
+    if uma_coordinate_head_enabled:
+        loss_uma_coord = uma_force_feedback_loss(model.generated_coordinates,
+                                                 pairs.temperature,
+                                                 dynamics_steps=K)
     if gflownet_stage:
         loss_gfn = trajectory_balance_loss(model, pairs, reward=verifier_or_UMA_reward)
     loss_attn = incidence_attention_kl(model.attention_maps, pairs)
@@ -2894,8 +2927,8 @@ for batch in dataloader:
     if model.attention_backend == "tropical":
         log_metrics(model.tropical_attention_metrics,
                     names=["hilbert_distance", "selection_margin", "argmax_diversity"])
-    loss = weighted_sum(loss_roa, loss_seq, loss_reason, loss_oracle, loss_gfn,
-                        loss_attn, loss_id, loss_top)
+    loss = weighted_sum(loss_roa, loss_seq, loss_reason, loss_oracle, loss_uma_coord,
+                        loss_gfn, loss_attn, loss_id, loss_top)
     loss.backward(); optimizer.step(); optimizer.zero_grad()
 \end{lstlisting}
 

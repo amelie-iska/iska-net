@@ -64,6 +64,7 @@ def main() -> None:
         path_status("config/model/tiny_tokengt_tropical.yaml"),
         path_status("config/train/graph_pretrain_tropical_attention_tiny.yaml"),
         path_status("config/train/overrides/tropical_attention_backend.yaml"),
+        path_status("config/train/overrides/uma_coordinate_head.yaml"),
         path_status("config/model/overrides/tropical_attention_backend.yaml"),
         path_status("config/model/overrides/hybrid_flash_mhta_backend.yaml"),
         path_status("config/generated/real_full_selected_context_compact.yaml"),

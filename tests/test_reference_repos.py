@@ -27,3 +27,14 @@ def test_extra_vocab_tokens_are_loaded(tmp_path: Path):
     assert "<protein>" in vocab.token_to_id
     assert "<coord>" in vocab.token_to_id
     assert "UNIGENX:TOK:C" in vocab.token_to_id
+
+
+def test_reused_vocab_extends_without_reindexing():
+    vocab = build_vocab(iter_synthetic_examples(2), max_size=16)
+    original = dict(vocab.token_to_id)
+    added = vocab.extend(["UMA_COORD_QUERY:C", "UMA_COORD_QUERY:N", "UMA_COORD_QUERY:C"])
+    assert added == 2
+    for token, token_id in original.items():
+        assert vocab.token_to_id[token] == token_id
+    assert vocab.token_to_id["UMA_COORD_QUERY:C"] == len(original)
+    assert vocab.token_to_id["UMA_COORD_QUERY:N"] == len(original) + 1

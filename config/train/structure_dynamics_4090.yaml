@@ -22,7 +22,10 @@ train:
   checkpoint_every: 500
 loss:
   topology_weight: 0.05
-  coordinate_loss_weight: 0.1
+  # Structure files remain evaluation/future-phase sources. The active UMA
+  # coordinate path uses model-generated coordinates plus oracle force feedback,
+  # not supervised coordinate labels copied from PDB/SDF/mmCIF/MD rows.
+  coordinate_loss_weight: 0.0
 model:
   coordinate_head_enabled: true
   coordinate_target_scale: 10.0

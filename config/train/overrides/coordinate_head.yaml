@@ -4,4 +4,7 @@ model:
   coordinate_logvar_min: -8.0
   coordinate_logvar_max: 4.0
 loss:
-  coordinate_loss_weight: 0.1
+  # Supervised coordinate NLL remains off by default. Use
+  # uma_coordinate_head.yaml for UMA energy/force feedback on model-generated
+  # coordinates without structure-file coordinate labels.
+  coordinate_loss_weight: 0.0

@@ -128,6 +128,7 @@ ENERGY_BINS = ["very_low", "low", "medium", "high", "very_high"]
 FORCE_MAGNITUDE_BINS = ["zero", "tiny", "small", "medium", "large"]
 FORCE_DIRECTIONS = ["px", "nx", "py", "ny", "pz", "nz", "mixed"]
 PDB_RECORD_TYPES = ["MODEL", "ATOM", "HETATM", "CONECT", "REMARK", "ENDMDL", "END"]
+UMA_COORD_QUERY_ELEMENTS = ["H", "B", "C", "N", "O", "F", "P", "S", "Cl", "Br", "I"]
 TOOL_TOKENS = ["lean", "python", "rdkit", "openmm", "uma", "retriever", "pdb_parser"]
 REASONING_TOKENS = [
     "thought",
@@ -519,6 +520,7 @@ def multimodal_reference_tokens(extra_motif_paths: Iterable[str | Path] = ()) ->
     tokens.extend(f"FORCE:mag:{bin_name}" for bin_name in FORCE_MAGNITUDE_BINS)
     tokens.extend(f"FORCE:dir:{direction}" for direction in FORCE_DIRECTIONS)
     tokens.extend(f"PDB:{record}" for record in PDB_RECORD_TYPES)
+    tokens.extend(f"UMA_COORD_QUERY:{element}" for element in UMA_COORD_QUERY_ELEMENTS)
     tokens.extend(f"TOOL:{tool}" for tool in TOOL_TOKENS)
     tokens.extend(f"REASON:{token}" for token in REASONING_TOKENS)
     tokens.extend(f"ATTN_BIN:{route}:{level}" for route in ATTENTION_ROUTE_FAMILIES for level in ATTENTION_BIN_LEVELS)

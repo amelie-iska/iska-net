@@ -1,0 +1,34 @@
+model:
+  coordinate_head_enabled: true
+  coordinate_target_scale: 10.0
+  coordinate_logvar_min: -8.0
+  coordinate_logvar_max: 4.0
+
+data:
+  # Adds source-side UMA_COORD_QUERY:* slots derived from sequence records or
+  # SELFIES/SMILES strings. These are candidate atoms for model-generated
+  # coordinates, not copied structure labels.
+  max_uma_coordinate_atoms: 16
+
+loss:
+  # Keep supervised coordinate labels disabled. The coordinate head learns from
+  # UMA scores and forces evaluated on its own generated coordinate proposals.
+  coordinate_loss_weight: 0.0
+  uma_coordinate_oracle_weight: 0.02
+  uma_coordinate_oracle_backend: fairchem
+  uma_coordinate_oracle_every: 16
+  uma_coordinate_max_examples: 1
+  uma_coordinate_max_atoms: 16
+  uma_coordinate_force_clip: 5.0
+  uma_coordinate_center_weight: 0.001
+  uma_coordinate_repulsion_weight: 0.01
+  uma_coordinate_min_distance: 0.75
+  # Treat reasoning iterations as a short physical-time rollout: coordinates
+  # are rescored after detached UMA force updates.
+  uma_coordinate_dynamics_steps: 2
+  uma_coordinate_force_step_size: 0.02
+  uma_coordinate_repo: data/external_repos/fairchem
+  uma_coordinate_model_name: uma-s-1p2
+  uma_coordinate_task_name: omol
+  uma_coordinate_device: cuda
+  uma_coordinate_strict: false

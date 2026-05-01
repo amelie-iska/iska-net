@@ -43,6 +43,20 @@ NUMERIC_NODE_TYPES = {
 COORD_TOKEN_RE = re.compile(r"^COORD:f(?P<frame>\d+):a(?P<atom>\d+):(?P<axis>[xyz]):")
 AXIS_TO_INDEX = {"x": 0, "y": 1, "z": 2}
 COORDINATE_NODE_TYPES = {"coordinate_3d", "protein_coordinate", "ligand_coordinate"}
+COMMON_ATOMIC_NUMBERS = {
+    "H": 1,
+    "B": 5,
+    "C": 6,
+    "N": 7,
+    "O": 8,
+    "F": 9,
+    "P": 15,
+    "S": 16,
+    "Cl": 17,
+    "Br": 35,
+    "I": 53,
+}
+PROTEIN_BACKBONE_SYMBOLS = ("N", "C", "C", "O")
 
 
 def _float_or_none(value: Any) -> float | None:
@@ -177,6 +191,82 @@ def coordinate_targets_by_index(example: GraphExample) -> tuple[list[list[float]
     return targets, masks
 
 
+def _candidate_smiles(example: GraphExample) -> str:
+    metadata = example.metadata or {}
+    for key in ("smiles", "SMILES", "canonical_smiles"):
+        value = metadata.get(key)
+        if value:
+            return str(value)
+    for token in example.target_tokens:
+        if token.startswith("SMILES:"):
+            return token.split(":", 1)[1]
+    for node in example.nodes:
+        if node.type == "smiles" and node.value:
+            return str(node.value)
+    return ""
+
+
+def _protein_backbone_symbols(example: GraphExample, max_atoms: int) -> list[str]:
+    """Return a coarse protein backbone atom list from sequence records only."""
+    if max_atoms <= 0:
+        return []
+    sequence = ""
+    residues: list[str] = []
+    metadata = example.metadata or {}
+    for key in ("protein_sequence", "sequence", "aa_sequence"):
+        value = metadata.get(key)
+        if value:
+            sequence = str(value)
+            break
+    for node in example.nodes:
+        if node.type == "amino_acid" and node.value:
+            residues.append(str(node.value).strip()[:1])
+        elif node.type in {"protein_sequence", "translated_protein_sequence"} and node.value and not sequence:
+            sequence = str(node.value)
+    residue_count = len(residues) if residues else sum(1 for char in sequence if char.isalpha())
+    symbols: list[str] = []
+    for _ in range(residue_count):
+        symbols.extend(PROTEIN_BACKBONE_SYMBOLS)
+        if len(symbols) >= max_atoms:
+            return symbols[:max_atoms]
+    return symbols[:max_atoms]
+
+
+def uma_coordinate_symbols(example: GraphExample, max_atoms: int) -> list[str]:
+    """Derive UMA coordinate-query atom symbols without reading structure labels."""
+    if max_atoms <= 0:
+        return []
+    symbols: list[str] = []
+    for node in example.nodes:
+        if node.type not in {"atom", "atom_symbol"}:
+            continue
+        raw = node.features.get("element") or node.features.get("symbol") or node.value
+        symbol = str(raw).strip()
+        if symbol:
+            symbols.append(symbol)
+        if len(symbols) >= max_atoms:
+            return symbols[:max_atoms]
+
+    protein_symbols = _protein_backbone_symbols(example, max_atoms)
+    if protein_symbols:
+        return protein_symbols[:max_atoms]
+
+    smiles = _candidate_smiles(example)
+    if not smiles:
+        return []
+    try:
+        from rdkit import Chem
+        from rdkit import RDLogger
+
+        RDLogger.DisableLog("rdApp.*")
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return []
+        return [atom.GetSymbol() for atom in mol.GetAtoms()][:max_atoms]
+    except Exception:
+        return []
+
+
 def extract_numeric_values(example: GraphExample, max_values: int) -> tuple[list[float], list[float]]:
     values: list[float] = []
     if max_values <= 0:
@@ -211,6 +301,8 @@ class EncodedExample:
     numeric_features: list[list[float]]
     coordinate_targets: list[list[float]]
     coordinate_mask: list[list[float]]
+    uma_coordinate_query_mask: list[float]
+    uma_coordinate_symbols: list[str]
     slot_ids: list[int]
     labels: list[int]
     task: str
@@ -370,13 +462,17 @@ def encode_example(
     max_source_tokens: int,
     max_target_tokens: int,
     max_seq_len: int | None = None,
+    max_uma_coordinate_atoms: int = 0,
 ) -> EncodedExample:
     source_tokens, source_kinds, endpoints, identifiers = graph_source_tokens(example)
     source_numeric_features = graph_source_numeric_features(example)
+    query_symbols = uma_coordinate_symbols(example, max_uma_coordinate_atoms)
     if max_seq_len is not None:
         target_count = min(len(order), max_target_tokens)
         reserved = 1 + 2 * target_count
-        source_budget = max(1, min(max_source_tokens, max_seq_len - reserved))
+        query_budget = min(len(query_symbols), max(0, max_seq_len - reserved - 1))
+        source_budget = max(1, min(max_source_tokens, max_seq_len - reserved - query_budget))
+        query_symbols = query_symbols[:query_budget]
     else:
         source_budget = max_source_tokens
     source_tokens = source_tokens[:source_budget]
@@ -393,8 +489,23 @@ def encode_example(
     numeric_features = list(source_numeric_features)
     coordinate_targets = [[0.0, 0.0, 0.0] for _ in token_ids]
     coordinate_mask = [[0.0, 0.0, 0.0] for _ in token_ids]
+    uma_coordinate_query_mask = [0.0 for _ in token_ids]
     slot_ids = [0 for _ in token_ids]
     labels = [-100 for _ in token_ids]
+
+    query_count = max(1, len(query_symbols))
+    for atom_idx, symbol in enumerate(query_symbols):
+        token_ids.append(vocab.encode(f"UMA_COORD_QUERY:{symbol}"))
+        kind_ids.append(KIND_TO_ID["special"])
+        endpoint_ids.append((0, 0))
+        identifier_ids.append(0)
+        atomic_num = COMMON_ATOMIC_NUMBERS.get(symbol, 0)
+        numeric_features.append([1.0, atom_idx / query_count, atomic_num / 100.0, query_count / 128.0])
+        coordinate_targets.append([0.0, 0.0, 0.0])
+        coordinate_mask.append([0.0, 0.0, 0.0])
+        uma_coordinate_query_mask.append(1.0)
+        slot_ids.append(min(atom_idx + 1, max_target_tokens))
+        labels.append(-100)
 
     token_ids.append(vocab.encode("<SEP>"))
     kind_ids.append(KIND_TO_ID["special"])
@@ -403,6 +514,7 @@ def encode_example(
     numeric_features.append([0.0] * 4)
     coordinate_targets.append([0.0, 0.0, 0.0])
     coordinate_mask.append([0.0, 0.0, 0.0])
+    uma_coordinate_query_mask.append(0.0)
     slot_ids.append(0)
     labels.append(-100)
 
@@ -415,6 +527,7 @@ def encode_example(
         numeric_features.append([0.0] * 4)
         coordinate_targets.append(per_target_coords[target_idx])
         coordinate_mask.append(per_target_coord_mask[target_idx])
+        uma_coordinate_query_mask.append(0.0)
         slot_ids.append(min(target_idx + 1, max_target_tokens))
         labels.append(vocab.encode(token))
 
@@ -425,6 +538,7 @@ def encode_example(
         numeric_features.append([0.0] * 4)
         coordinate_targets.append([0.0, 0.0, 0.0])
         coordinate_mask.append([0.0, 0.0, 0.0])
+        uma_coordinate_query_mask.append(0.0)
         slot_ids.append(min(target_idx + 1, max_target_tokens))
         labels.append(-100)
 
@@ -436,6 +550,8 @@ def encode_example(
         numeric_features=numeric_features,
         coordinate_targets=coordinate_targets,
         coordinate_mask=coordinate_mask,
+        uma_coordinate_query_mask=uma_coordinate_query_mask,
+        uma_coordinate_symbols=query_symbols,
         slot_ids=slot_ids,
         labels=labels,
         task=example.task,
@@ -451,6 +567,7 @@ class RandomOrderCollator:
         max_target_tokens: int = 64,
         max_seq_len: int = 256,
         max_numeric_targets: int = 0,
+        max_uma_coordinate_atoms: int = 0,
         order_mode: str = "sample",
         seed: int = 17,
     ):
@@ -459,6 +576,7 @@ class RandomOrderCollator:
         self.max_target_tokens = max_target_tokens
         self.max_seq_len = max_seq_len
         self.max_numeric_targets = max_numeric_targets
+        self.max_uma_coordinate_atoms = max_uma_coordinate_atoms
         self.order_mode = order_mode
         self.rng = random.Random(seed)
 
@@ -471,6 +589,7 @@ class RandomOrderCollator:
                 self.max_source_tokens,
                 self.max_target_tokens,
                 self.max_seq_len,
+                self.max_uma_coordinate_atoms,
             )
             for ex in examples
         ]
@@ -485,6 +604,7 @@ class RandomOrderCollator:
         source_numeric_features = torch.zeros((batch, seq_len, 4), dtype=torch.float32)
         coordinate_targets = torch.zeros((batch, seq_len, 3), dtype=torch.float32)
         coordinate_mask = torch.zeros((batch, seq_len, 3), dtype=torch.float32)
+        uma_coordinate_query_mask = torch.zeros((batch, seq_len), dtype=torch.float32)
         labels = torch.full((batch, seq_len), -100, dtype=torch.long)
         attention_mask = torch.zeros((batch, seq_len), dtype=torch.bool)
         topology_features = topology_feature_tensor(examples)
@@ -501,6 +621,7 @@ class RandomOrderCollator:
             source_numeric_features[row, :n] = torch.tensor(ex.numeric_features[:n], dtype=torch.float32)
             coordinate_targets[row, :n] = torch.tensor(ex.coordinate_targets[:n], dtype=torch.float32)
             coordinate_mask[row, :n] = torch.tensor(ex.coordinate_mask[:n], dtype=torch.float32)
+            uma_coordinate_query_mask[row, :n] = torch.tensor(ex.uma_coordinate_query_mask[:n], dtype=torch.float32)
             labels[row, :n] = torch.tensor(ex.labels[:n], dtype=torch.long)
             attention_mask[row, :n] = True
             values, value_mask = extract_numeric_values(examples[row], self.max_numeric_targets)
@@ -519,6 +640,7 @@ class RandomOrderCollator:
             "source_numeric_features": source_numeric_features,
             "coordinate_targets": coordinate_targets,
             "coordinate_mask": coordinate_mask,
+            "uma_coordinate_query_mask": uma_coordinate_query_mask,
             "labels": labels,
             "attention_mask": attention_mask,
             "causal_mask": causal_mask,
@@ -527,5 +649,6 @@ class RandomOrderCollator:
             "numeric_mask": numeric_mask,
             "tasks": [ex.task for ex in examples],
             "example_ids": [ex.id for ex in examples],
+            "uma_coordinate_symbols": [ex.uma_coordinate_symbols for ex in encoded],
             "examples": examples,
         }

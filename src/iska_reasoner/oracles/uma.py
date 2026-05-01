@@ -30,6 +30,7 @@ class UmaOracleResult:
     energy_ev: float | None = None
     energy_per_atom_ev: float | None = None
     force_rms_ev_per_a: float | None = None
+    forces_ev_per_a: list[list[float]] | None = None
     model_name: str = DEFAULT_UMA_MODEL
     task_name: str = DEFAULT_UMA_TASK
     repo_path: str = DEFAULT_FAIRCHEM_REPO
@@ -181,6 +182,19 @@ def _atoms_from_smiles(smiles: str):
     return atoms
 
 
+def _atoms_from_symbols_positions(symbols: list[str], positions: list[list[float]], charge: int = 0, spin: int = 1):
+    if not symbols:
+        raise ValueError("missing atom symbols for FairChem/UMA scoring")
+    if len(symbols) != len(positions):
+        raise ValueError(f"symbol/position length mismatch: {len(symbols)} != {len(positions)}")
+    from ase import Atoms  # type: ignore
+
+    atoms = Atoms(symbols=symbols, positions=positions, pbc=False)
+    atoms.info["charge"] = int(charge)
+    atoms.info["spin"] = int(spin)
+    return atoms
+
+
 @lru_cache(maxsize=4)
 def _fairchem_calculator(repo_path: str, model_name: str, task_name: str, device: str):
     repo = _resolve_repo_path(repo_path)
@@ -207,6 +221,73 @@ def _reward_from_energy_force(energy_ev: float, atom_count: int, force_rms: floa
         temp = max(300.0, min(400.0, float(temperature_k)))
         raw = raw ** (350.0 / temp)
     return max(1e-4, min(0.75, 0.75 * raw)), energy_per_atom
+
+
+def _proxy_force_result(symbols: list[str], positions: list[list[float]], temperature_k: float | None) -> UmaOracleResult:
+    """Deterministic smoke-test oracle over candidate coordinates.
+
+    This is not used as a scientific oracle. It gives tests a differentiable
+    force direction with no FairChem dependency.
+    """
+    forces: list[list[float]] = []
+    energy = 0.0
+    temp = max(300.0, min(400.0, float(temperature_k or 300.0)))
+    spread = 1.0 + (temp - 300.0) / 100.0
+    for pos in positions:
+        xyz = [float(pos[i]) if i < len(pos) else 0.0 for i in range(3)]
+        energy += 0.5 * sum((coord / spread) ** 2 for coord in xyz)
+        forces.append([-(coord / (spread**2)) for coord in xyz])
+    force_rms = math.sqrt(sum(sum(axis * axis for axis in force) for force in forces) / max(1, len(forces)))
+    reward, energy_per_atom = _reward_from_energy_force(energy, len(symbols), force_rms, temperature_k)
+    return UmaOracleResult(
+        backend="proxy",
+        available=True,
+        reward=reward,
+        score=reward / 0.75,
+        temperature_k=temperature_k,
+        atom_count=len(symbols),
+        energy_ev=energy,
+        energy_per_atom_ev=energy_per_atom,
+        force_rms_ev_per_a=force_rms,
+        forces_ev_per_a=forces,
+        message="explicit deterministic proxy coordinate oracle; use only for tests and smoke runs",
+    )
+
+
+def _score_atoms_with_fairchem(
+    atoms: Any,
+    *,
+    repo: Path,
+    model: str,
+    task: str,
+    dev: str,
+    temperature_k: float | None,
+) -> UmaOracleResult:
+    status = fairchem_repo_status(repo)
+    if not status["exists"] or not status["importable"]:
+        raise RuntimeError(status.get("error") or "FairChem repository is unavailable")
+    calc = _fairchem_calculator(str(repo), model, task, dev)
+    atoms.calc = calc
+    energy_ev = float(atoms.get_potential_energy())
+    forces = atoms.get_forces()
+    force_rms = float((forces**2).sum(axis=1).mean() ** 0.5) if len(forces) else None
+    reward, energy_per_atom = _reward_from_energy_force(energy_ev, len(atoms), force_rms, temperature_k)
+    return UmaOracleResult(
+        backend="fairchem",
+        available=True,
+        reward=reward,
+        score=reward / 0.75,
+        temperature_k=temperature_k,
+        atom_count=int(len(atoms)),
+        energy_ev=energy_ev,
+        energy_per_atom_ev=energy_per_atom,
+        force_rms_ev_per_a=force_rms,
+        forces_ev_per_a=forces.tolist() if hasattr(forces, "tolist") else None,
+        model_name=model,
+        task_name=task,
+        repo_path=str(repo),
+        message="FairChem UMA score",
+    )
 
 
 def _proxy_result(example: GraphExample, predicted_tokens: list[str], proxy_reward: float | None) -> UmaOracleResult:
@@ -248,32 +329,10 @@ def score_uma_oracle_candidate(
     smiles = candidate_smiles(example, predicted_tokens)
     temp_k = _temperature_kelvin(example)
     try:
-        status = fairchem_repo_status(repo)
-        if not status["exists"] or not status["importable"]:
-            raise RuntimeError(status.get("error") or "FairChem repository is unavailable")
         atoms = _atoms_from_smiles(smiles)
-        calc = _fairchem_calculator(str(repo), model, task, dev)
-        atoms.calc = calc
-        energy_ev = float(atoms.get_potential_energy())
-        forces = atoms.get_forces()
-        force_rms = float((forces**2).sum(axis=1).mean() ** 0.5) if len(forces) else None
-        reward, energy_per_atom = _reward_from_energy_force(energy_ev, len(atoms), force_rms, temp_k)
-        return UmaOracleResult(
-            backend="fairchem",
-            available=True,
-            reward=reward,
-            score=reward / 0.75,
-            temperature_k=temp_k,
-            smiles=smiles,
-            atom_count=int(len(atoms)),
-            energy_ev=energy_ev,
-            energy_per_atom_ev=energy_per_atom,
-            force_rms_ev_per_a=force_rms,
-            model_name=model,
-            task_name=task,
-            repo_path=str(repo),
-            message="FairChem UMA score",
-        )
+        result = _score_atoms_with_fairchem(atoms, repo=repo, model=model, task=task, dev=dev, temperature_k=temp_k)
+        result.smiles = smiles
+        return result
     except Exception as exc:
         if strict_mode:
             raise
@@ -284,6 +343,49 @@ def score_uma_oracle_candidate(
             score=0.0,
             temperature_k=temp_k,
             smiles=smiles,
+            model_name=model,
+            task_name=task,
+            repo_path=str(repo),
+            message=f"{exc.__class__.__name__}: {exc}",
+        )
+
+
+def score_uma_coordinate_candidate(
+    symbols: list[str],
+    positions: list[list[float]],
+    *,
+    temperature_k: float | None = None,
+    backend: str | None = None,
+    strict: bool | None = None,
+    repo_path: str | Path | None = None,
+    model_name: str | None = None,
+    task_name: str | None = None,
+    device: str | None = None,
+) -> UmaOracleResult:
+    """Score model-proposed coordinates with UMA without structure labels."""
+    selected_backend = (backend or os.environ.get("UGM_UMA_BACKEND") or "fairchem").lower()
+    strict_mode = bool(int(os.environ.get("UGM_UMA_STRICT", "0"))) if strict is None else strict
+    repo = _resolve_repo_path(repo_path)
+    model = model_name or os.environ.get("UGM_UMA_MODEL") or DEFAULT_UMA_MODEL
+    task = task_name or os.environ.get("UGM_UMA_TASK") or DEFAULT_UMA_TASK
+    dev = device or os.environ.get("UGM_UMA_DEVICE") or DEFAULT_UMA_DEVICE
+    if selected_backend == "proxy":
+        return _proxy_force_result(symbols, positions, temperature_k)
+    if selected_backend not in {"fairchem", "uma"}:
+        raise ValueError(f"Unknown UMA oracle backend: {selected_backend}")
+    try:
+        atoms = _atoms_from_symbols_positions(symbols, positions)
+        return _score_atoms_with_fairchem(atoms, repo=repo, model=model, task=task, dev=dev, temperature_k=temperature_k)
+    except Exception as exc:
+        if strict_mode:
+            raise
+        return UmaOracleResult(
+            backend="fairchem",
+            available=False,
+            reward=0.0,
+            score=0.0,
+            temperature_k=temperature_k,
+            atom_count=len(symbols),
             model_name=model,
             task_name=task,
             repo_path=str(repo),

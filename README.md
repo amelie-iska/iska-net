@@ -1,10 +1,10 @@
 # Iska Universal Graph Model Scaffold
 
-<img src="./assets/SGRM-UGM-1.png" alt="SGRM-UGM" width="900">
+<img src="./assets/UGM-1.png" alt="Universal Graph Model" width="900">
 
 [![Paper PDF](https://img.shields.io/badge/Paper-link%20PDF-1f6feb?style=for-the-badge&logo=arxiv&logoColor=white)](./assets/human_learning_transformer_learning_review_dataset_expanded.pdf)
 
-This repo is a training scaffold for "*SGRM*" (Scientific Graph Reasoning Model), a **Universal Graph Model (UGM)**, which is **וְגַם סְגָרִים**: a clopen-style model that is open to graph-structured information across modalities while seeking closure under a universal architecture. The central goal is that the broadly optimized transformer substrate can become a standardized graph reasoner through a simple tokenization and positional/identifier encoding of both vertices and edges, without requiring specialized graph attention for every domain. That same graph-token interface also makes the ideas in [Tropical Quivers of Archs](https://github.com/amelie-iska/Tropical_Quivers_of_Archs) and the NeurIPS 2025 [Tropical Attention](https://github.com/amelie-iska/Tropical-Attention) implementation natural to standardize: complex directed model graphs can be composed at the continuous embedding-space level rather than only through discrete token streams. UGM is therefore a TokenGT-style graph-to-graph model type for language, reasoning, tools, SELFIES/SMILES molecules, proteins, DNA/RNA, graph-state reasoning, temperature-conditioned UMA-oracle feedback, GFlowNet training, graph/tree/chain-of-thought supervision, continuous latent reasoning, optional Tropical Attention, and persistent-topology/tropical-geometry diagnostics.
+This repo is a training scaffold for the **Universal Graph Model (UGM)**: a clopen-style model that is open to graph-structured information across modalities while seeking closure under a universal architecture. The central goal is that the broadly optimized transformer substrate can become a standardized graph reasoner through a simple tokenization and positional/identifier encoding of both vertices and edges, without requiring specialized graph attention for every domain. That same graph-token interface also makes the ideas in [Tropical Quivers of Archs](https://github.com/amelie-iska/Tropical_Quivers_of_Archs) and the NeurIPS 2025 [Tropical Attention](https://github.com/amelie-iska/Tropical-Attention) implementation natural to standardize: complex directed model graphs can be composed at the continuous embedding-space level rather than only through discrete token streams. UGM is therefore a TokenGT-style graph-to-graph model type for language, reasoning, tools, SELFIES/SMILES molecules, proteins, DNA/RNA, graph-state reasoning, temperature-conditioned UMA-oracle feedback, GFlowNet training, graph/tree/chain-of-thought supervision, continuous latent reasoning, optional Tropical Attention, and persistent-topology/tropical-geometry diagnostics.
 
 **Why include MHTA (multi-head tropical attention)?**
 The [Tropical Attention](https://arxiv.org/abs/2505.17190) paper gives the exact reason MHTA belongs in UGM as an optional graph-reasoning backend: it proves that MHTA stacks universally approximate tropical circuits and realize tropical transitive closure by composition. In the paper's words, MHTA is a universal approximator of max-plus dynamic programming for combinatorial optimization with closure; the relevant proof references are Theorem C.3, Corollary C.3.1, and Theorem 3.2.
@@ -41,10 +41,10 @@ The implemented path is intentionally practical for one RTX 4090: graph-rich exa
 - Domain vertical slices for code/unit tests, Lean availability/compile checks, and RDKit-backed molecule graphs when RDKit is installed.
 - PLAN-D/PLAN-G science-data slices for SFM/NatureLM reference vocabulary and UniGenX-style molecule/material graphs.
 - PLAN-E Hebrew morphology/root slices with UD Hebrew HTB, Hebrew QA, Nakdimon diacritization, root-template graphs, and root-extension GFlowNet training.
-- PLAN-F/PLAN-G deferred-component closure: optional advanced topology backends, tropical attention/parser utilities, autoregressive coordinate/property graph tokens plus a gated continuous coordinate head for future structure phases, audio feature extraction, local SFM/NatureLM and UniGenX science-source preparation, bioactivity/docking/protein graphification, safer verifier execution, stronger curation, and context-aware learned-backward GFlowNets.
+- PLAN-F/PLAN-G deferred-component closure: optional advanced topology backends, tropical attention/parser utilities, autoregressive coordinate/property graph tokens plus a gated continuous coordinate head, audio feature extraction, local SFM/NatureLM and UniGenX science-source preparation, bioactivity/docking/protein graphification, safer verifier execution, stronger curation, and context-aware learned-backward GFlowNets.
 - PLAN-H UGM multimodal graph-to-graph phase: sequence-first vocabulary for text/protein/SELFIES/SMILES/DNA/RNA/tool/oracle records, local-source preparation, continuous temperature conditioning, UMA-conditioned coupling/motion bins, function-description alignment, and oracle-feedback GFlowNet rewards.
 - Full motif vocabulary path for sequence-first multimodal training: PROSITE, InterPro, Rfam, core sequence motifs, safe `SEQ_MOTIF_FROM_STRUCTURE:*` vocabulary entries, and optional non-structure molecule descriptors are parsed into graph-record vocabulary tokens; row-local structure motifs from coordinates/contact labels are evaluation/future-phase only.
-- Structure/dynamics sources are validation-only by default. Actual PDB/mmCIF/SDF/trajectory, coordinate, energy, and force training remains disabled unless a later explicit phase enables it.
+- Structure/dynamics sources are validation-only by default. Actual PDB/mmCIF/SDF/trajectory coordinate labels, energy labels, and force labels remain disabled. The active coordinate path uses model-generated coordinates scored by UMA as an online oracle.
 - Verifier-aware GFlowNet graph-of-thought trajectory-balance trainer plus rollout validation.
 - Config-driven validation and inference CLIs.
 - Smoke tests.
@@ -162,6 +162,7 @@ ENABLE_TROPICAL_ATTENTION=1 FULL_TRAIN_BATCH_SIZE=2 FULL_TRAIN_GRAD_ACCUM=18 ./s
 ./scripts/train_full_selected_250m_direct.sh
 FULL_TRAIN_MAX_STEPS=20 ./scripts/train_full_selected_250m_direct.sh
 ENABLE_TROPICAL_ATTENTION=1 FULL_TRAIN_MAX_STEPS=20 ./scripts/train_full_selected_250m_direct.sh
+ENABLE_TROPICAL_ATTENTION=1 ENABLE_UMA_COORDINATE_HEAD=1 FULL_TRAIN_MAX_STEPS=20 ./scripts/train_full_selected_250m_direct.sh
 MODEL_CONFIG=config/model/ugm_250m_tokengt.yaml scripts/run_full_phase1_phase2_training.sh
 TRAINING_FIRST=0 SKIP_INTERPRO_MOTIF_DOWNLOAD=0 scripts/run_full_phase1_phase2_training.sh
 ```
@@ -244,7 +245,7 @@ The 250M setup uses `config/model/ugm_250m_tokengt.yaml`, `config/data/real_full
 
 ### Sequence-First Multimodal And FairChem/UMA Oracle Conditioning
 
-The current multimodal phase uses local sequence/string exports from `data/local/multimodal/`. The `--synthetic-if-empty` flag is reserved for smoke tests only; production training should omit it so missing reviewed rows fail visibly. First-run molecular training is SELFIES/SMILES and protein/DNA/RNA sequence-first: actual structure files, coordinate trajectories, energies, and forces are excluded from supervised training.
+The current multimodal phase uses local sequence/string exports from `data/local/multimodal/`. The `--synthetic-if-empty` flag is reserved for smoke tests only; production training should omit it so missing reviewed rows fail visibly. First-run molecular training is SELFIES/SMILES and protein/DNA/RNA sequence-first: actual structure files, coordinate trajectories, energies, and forces are excluded from supervised training. When the optional UMA coordinate head is enabled, protein sequences still get candidate coarse backbone coordinate slots (`N,C,C,O` per residue up to the configured cap) and molecule strings get candidate atom slots. Those coordinates are generated by the model and scored by UMA; they are not copied from PDB, SDF, mmCIF, or trajectory files.
 
 Temperature conditioning is continuous over roughly `300K..400K`. The graphifier stores both stable anchor/bin tokens and continuous Kelvin features, and FairChem/UMA oracle calls use that same continuous temperature when scoring candidate graph states.
 
@@ -253,6 +254,8 @@ Function-description training is part of the first curriculum. Use SFM/NatureLM-
 UMA influences graph-state evolution through fine-grained binned records only in the UMA candidate-scoring stage. Ordinary sequence reconstruction and function-description rows may carry temperature and function nodes, but they do not emit AF-style 64-bin `ATTN_BIN:*`, `TOKEN_COUPLING:uma:*`, `UMA_INFLUENCE:uma:*`, `TOKEN_MOTION:uma:*`, `UMA_TRAJ_BIN:*`, or `SEQ_STRUCT_DYN_PROXY:*` targets unless an oracle stage flag or structure-dynamics task is active. In that stage, GFlowNet training learns temperature-conditioned coupling, motion, and trajectory policies from SELFIES/FASTA inputs only.
 
 The stage is still aimed at actual structure-dynamics generation. The model should propose typed atom/bond/coordinate/frame graph records; the restriction is that those predictions are trained through UMA/verifier/GFlowNet feedback rather than supervised copying of structure files, energy/force labels, or MD frames. Generated-token PDB rendering is optional and not required for this pass.
+
+The coordinate head is a readout from embedding-space graph-of-thought state, not a replacement for it. UGM continues to learn graph reasoning through hidden thought states, graph-token autoregression, attention/contact fields, and verifier/oracle records. The UMA coordinate objective backpropagates through the coordinate readout into the same hidden embeddings and attention layers. With `uma_coordinate_dynamics_steps > 1`, each reasoning iteration is treated like a short physical-time step: the current generated coordinates are scored by UMA at the graph's continuous temperature, detached UMA forces roll the candidate forward, and the next score is logged and trained against the same latent graph state. Low-temperature examples emphasize stabilization and refinement; high-temperature examples keep broader contact and coordinate support.
 
 Mechanistically, the UMA stage treats evolving attention maps as contact fields. When `emit_attention_contact_maps` is enabled for the MHTA or hybrid FlashAttention/MHTA backend, MHTA Hilbert-distance scores are converted into row-normalized contact maps and fused with Euclidean hidden-state geometry plus Jensen-Shannon hidden-state geometry. The resulting field is a sequence-conditioned contact hypothesis, not a copied structure label. With `config/train/overrides/uma_contact_geometry_loss.yaml`, rows that carry explicit UMA feedback records train both the contact map and embedding geometry: low-temperature rows prefer sharper stabilization/refinement support, while high-temperature rows prefer higher contact-map and embedding-geometry entropy, broader token-motion records such as `explore`, `diversify`, and `expand`, and more diverse GFlowNet terminal states. FairChem/UMA then scores candidate molecules by energy and force at the graph-specified Kelvin temperature; this oracle reward is what reinforces the graph-state path.
 
@@ -730,17 +733,18 @@ conda run -n tokengt python scripts/train_stage.py \
   --config config/train/science_sft_tiny.yaml
 ```
 
-UGM uses a single autoregressive graph-token decoder for symbolic and structure-candidate records. Generated frame coordinates are first discretized into identity-bearing target records such as `COORD:f0:a17:x:pos_near`, so frame, atom slot, axis, and coordinate bin are predicted through the same random-order `<POS>` objective as text, SELFIES, proof, tool, and oracle records. The implementation also includes an optional continuous coordinate head for a later explicit structure phase: when `model.coordinate_head_enabled=true`, every coordinate-bearing `<POS>` slot can predict a Gaussian mean and variance for `(x,y,z)`, and `loss.coordinate_loss_weight` adds the masked coordinate NLL only where coordinate targets are present. This head refines an already named graph coordinate record; it does not replace autoregressive graph decoding and it is off for the first sequence-only full run. Direct coordinate, dynamics, energy, and force labels from structure files remain disabled until a structure-file phase is explicitly approved.
+UGM uses a single autoregressive graph-token decoder for symbolic and structure-candidate records. Generated frame coordinates are first discretized into identity-bearing target records such as `COORD:f0:a17:x:pos_near`, so frame, atom slot, axis, and coordinate bin are predicted through the same random-order `<POS>` objective as text, SELFIES, proof, tool, and oracle records. The optional continuous coordinate head is configured for UMA feedback rather than supervised structure labels: when `model.coordinate_head_enabled=true`, source-side `UMA_COORD_QUERY:*` slots receive continuous `(x,y,z)` proposals, and `loss.uma_coordinate_oracle_weight` trains those proposals from UMA energy/force feedback evaluated on the generated candidates. `loss.coordinate_loss_weight` remains `0.0` in the provided overrides, so no PDB/SDF/mmCIF/MD coordinate targets are used. The head is a geometry readout from embedding-space GoT reasoning; it does not replace random-order graph decoding.
 
-Coordinate-head structure-phase override:
+UMA coordinate-head force-feedback override:
 
 ```bash
-conda run -n tokengt python scripts/train_stage.py \
-  --config config/model/max_4090_tokengt.yaml \
-  --config config/data/structure_dynamics_graphs.yaml \
-  --config config/train/structure_dynamics_4090.yaml \
-  --config config/train/overrides/coordinate_head.yaml
+ENABLE_TROPICAL_ATTENTION=1 \
+ENABLE_UMA_COORDINATE_HEAD=1 \
+SKIP_POLICY_CHECK=1 \
+./scripts/train_full_selected_250m_direct.sh
 ```
+
+For a manual invocation, add `--config config/train/overrides/uma_coordinate_head.yaml` after the base train config and before the W&B override. Use `config/train/overrides/coordinate_head.yaml` only to enable the head with supervised coordinate NLL still off.
 
 PLAN-H UGM multimodal phase-2 4090 stage:
 

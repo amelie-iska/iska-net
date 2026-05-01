@@ -26,6 +26,7 @@ from iska_reasoner.topology import (
 )
 from iska_reasoner.training.checkpointing import load_checkpoint, save_checkpoint
 from iska_reasoner.training.metrics import MetricAverager
+from iska_reasoner.training.uma_coordinate import uma_coordinate_head_oracle_loss
 from iska_reasoner.tropical import TropicalSchedule, logit_diagnostics
 from iska_reasoner.utils.io import ensure_dir
 from iska_reasoner.utils.logging import WandbLogger, get_device, set_seed, setup_logging
@@ -154,10 +155,20 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
             train_ds, val_ds = dataset, None
 
     vocab_path = Path(cfg["data"].get("vocab_path", output_dir / "vocab.jsonl"))
+    extra_tokens = read_extra_tokens(cfg["data"].get("extra_vocab_paths", []))
     if vocab_path.exists() and cfg["data"].get("reuse_vocab", True):
         vocab = GraphVocab.load(vocab_path)
+        added_tokens = vocab.extend(extra_tokens)
+        if added_tokens:
+            if cfg["train"].get("resume_from"):
+                raise ValueError(
+                    "Configured extra vocabulary tokens are missing from the reused vocab, "
+                    "but train.resume_from is set. Rebuild the checkpoint/vocab pair or disable "
+                    "the new token-producing feature before resuming."
+                )
+            logger.info("Extended reused vocab with %d configured extra tokens", added_tokens)
+            vocab.save(vocab_path)
     else:
-        extra_tokens = read_extra_tokens(cfg["data"].get("extra_vocab_paths", []))
         vocab = build_vocab(
             (dataset[i] for i in range(len(dataset))),
             min_freq=int(cfg["data"].get("min_freq", 1)),
@@ -169,12 +180,16 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
         vocab.save(vocab_path)
     logger.info("Vocab size: %d", len(vocab.token_to_id))
 
+    loss_cfg = cfg.get("loss", {})
+    uma_coordinate_weight = float(loss_cfg.get("uma_coordinate_oracle_weight", 0.0))
+    uma_coordinate_max_atoms = int(loss_cfg.get("uma_coordinate_max_atoms", cfg["data"].get("max_uma_coordinate_atoms", 0)))
     collator = RandomOrderCollator(
         vocab=vocab,
         max_source_tokens=int(cfg["data"].get("max_source_tokens", 128)),
         max_target_tokens=int(cfg["data"].get("max_target_tokens", 64)),
         max_seq_len=int(cfg["model"].get("max_seq_len", 256)),
         max_numeric_targets=0,
+        max_uma_coordinate_atoms=uma_coordinate_max_atoms,
         order_mode=cfg["data"].get("order_mode", "sample"),
         seed=seed,
     )
@@ -271,10 +286,37 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
     ckpt_every = int(cfg["train"].get("checkpoint_every", 100))
     ckpt_enabled = ckpt_every > 0
     max_grad_norm = float(cfg["train"].get("max_grad_norm", 1.0))
-    topo_weight = float(cfg.get("loss", {}).get("topology_weight", 0.0))
-    coordinate_loss_weight = float(cfg.get("loss", {}).get("coordinate_loss_weight", 0.0))
+    topo_weight = float(loss_cfg.get("topology_weight", 0.0))
+    coordinate_loss_weight = float(loss_cfg.get("coordinate_loss_weight", 0.0))
     if coordinate_loss_weight > 0 and not bool(model.cfg.coordinate_head_enabled):
         raise ValueError("loss.coordinate_loss_weight > 0 requires model.coordinate_head_enabled=true")
+    if uma_coordinate_weight > 0 and not bool(model.cfg.coordinate_head_enabled):
+        raise ValueError("loss.uma_coordinate_oracle_weight > 0 requires model.coordinate_head_enabled=true")
+    uma_coordinate_every = max(1, int(loss_cfg.get("uma_coordinate_oracle_every", 1)))
+    uma_coordinate_backend = str(loss_cfg.get("uma_coordinate_oracle_backend", "fairchem"))
+    uma_coordinate_repo = str(loss_cfg.get("uma_coordinate_repo", "data/external_repos/fairchem"))
+    uma_coordinate_model = str(loss_cfg.get("uma_coordinate_model_name", "uma-s-1p2"))
+    uma_coordinate_task = str(loss_cfg.get("uma_coordinate_task_name", "omol"))
+    uma_coordinate_device = str(loss_cfg.get("uma_coordinate_device", cfg["run"].get("device", "cuda")))
+    uma_coordinate_strict = bool(loss_cfg.get("uma_coordinate_strict", False))
+    uma_coordinate_max_examples = int(loss_cfg.get("uma_coordinate_max_examples", 1))
+    uma_coordinate_force_clip = float(loss_cfg.get("uma_coordinate_force_clip", 10.0))
+    uma_coordinate_center_weight = float(loss_cfg.get("uma_coordinate_center_weight", 0.001))
+    uma_coordinate_repulsion_weight = float(loss_cfg.get("uma_coordinate_repulsion_weight", 0.01))
+    uma_coordinate_min_distance = float(loss_cfg.get("uma_coordinate_min_distance", 0.75))
+    uma_coordinate_dynamics_steps = int(loss_cfg.get("uma_coordinate_dynamics_steps", 1))
+    uma_coordinate_force_step_size = float(loss_cfg.get("uma_coordinate_force_step_size", 0.02))
+    if uma_coordinate_weight > 0:
+        logger.info(
+            "UMA coordinate oracle loss enabled: weight=%s backend=%s every=%d max_examples=%d max_atoms=%d dynamics_steps=%d force_step_size=%s",
+            uma_coordinate_weight,
+            uma_coordinate_backend,
+            uma_coordinate_every,
+            uma_coordinate_max_examples,
+            uma_coordinate_max_atoms,
+            uma_coordinate_dynamics_steps,
+            uma_coordinate_force_step_size,
+        )
     hidden_topology_cfg = cfg.get("hidden_topology", {})
     hidden_topology_enabled = bool(hidden_topology_cfg.get("enabled", False))
     hidden_topology_every = max(1, int(hidden_topology_cfg.get("log_every", log_every)))
@@ -282,13 +324,13 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
     hidden_topology_bins = int(hidden_topology_cfg.get("bins", 8))
     folding_contact_enabled = bool(hidden_topology_cfg.get("folding_contact_enabled", False))
     folding_contact_include_hidden = bool(hidden_topology_cfg.get("folding_contact_include_hidden", False))
-    uma_contact_weight = float(cfg.get("loss", {}).get("uma_contact_alignment_weight", 0.0))
-    uma_contact_embedding_weight = float(cfg.get("loss", {}).get("uma_contact_embedding_weight", 0.5))
-    uma_contact_temperature_diversity_weight = float(cfg.get("loss", {}).get("uma_contact_temperature_diversity_weight", 0.5))
-    uma_contact_max_tokens = int(cfg.get("loss", {}).get("uma_contact_max_tokens", 192))
-    hidden_collapse_weight = float(cfg.get("loss", {}).get("hidden_topology_collapse_weight", 0.0))
+    uma_contact_weight = float(loss_cfg.get("uma_contact_alignment_weight", 0.0))
+    uma_contact_embedding_weight = float(loss_cfg.get("uma_contact_embedding_weight", 0.5))
+    uma_contact_temperature_diversity_weight = float(loss_cfg.get("uma_contact_temperature_diversity_weight", 0.5))
+    uma_contact_max_tokens = int(loss_cfg.get("uma_contact_max_tokens", 192))
+    hidden_collapse_weight = float(loss_cfg.get("hidden_topology_collapse_weight", 0.0))
     hidden_collapse_margin = float(hidden_topology_cfg.get("collapse_margin", 0.5))
-    hidden_js_weight = float(cfg.get("loss", {}).get("hidden_js_geometry_weight", 0.0))
+    hidden_js_weight = float(loss_cfg.get("hidden_js_geometry_weight", 0.0))
     hidden_js_margin = float(hidden_topology_cfg.get("js_margin", 0.05))
     if stage == "topology_aux" and topo_weight == 0.0:
         topo_weight = 1.0
@@ -336,6 +378,30 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
                 hidden_collapse = torch.tensor(0.0, device=device)
                 hidden_js_loss = torch.tensor(0.0, device=device)
                 uma_contact_loss = torch.tensor(0.0, device=device)
+                uma_coordinate_loss = torch.tensor(0.0, device=device)
+                uma_coordinate_train_metrics: dict[str, float] = {}
+                if uma_coordinate_weight > 0 and micro_step % uma_coordinate_every == 0:
+                    uma_coordinate_loss, uma_coordinate_train_metrics = uma_coordinate_head_oracle_loss(
+                        out.get("coordinate_mean"),
+                        batch.get("uma_coordinate_query_mask"),
+                        batch.get("uma_coordinate_symbols"),
+                        batch.get("examples", []),
+                        backend=uma_coordinate_backend,
+                        repo_path=uma_coordinate_repo,
+                        model_name=uma_coordinate_model,
+                        task_name=uma_coordinate_task,
+                        device_name=uma_coordinate_device,
+                        strict=uma_coordinate_strict,
+                        max_examples=uma_coordinate_max_examples,
+                        max_atoms=uma_coordinate_max_atoms,
+                        force_clip=uma_coordinate_force_clip,
+                        center_weight=uma_coordinate_center_weight,
+                        repulsion_weight=uma_coordinate_repulsion_weight,
+                        min_distance=uma_coordinate_min_distance,
+                        dynamics_steps=uma_coordinate_dynamics_steps,
+                        force_step_size=uma_coordinate_force_step_size,
+                    )
+                    full_loss = full_loss + uma_coordinate_weight * uma_coordinate_loss
                 if hidden_collapse_weight > 0:
                     hidden_collapse = hidden_topology_collapse_loss(
                         out["hidden_states"],
@@ -380,6 +446,7 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
                         "total_loss": _scalar_or_none(full_loss),
                         "topology_loss": _scalar_or_none(out.get("topology_loss")),
                         "coordinate_loss": _scalar_or_none(coordinate_loss),
+                        "uma_coordinate/oracle_loss": _scalar_or_none(uma_coordinate_loss),
                         "hidden_topology/collapse_loss": _scalar_or_none(hidden_collapse),
                         "hidden_topology/js_geometry_loss": _scalar_or_none(hidden_js_loss),
                         "uma_contact/alignment_loss": _scalar_or_none(uma_contact_loss),
@@ -402,11 +469,13 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
                 "coordinate/rmse": out.get("coordinate_rmse", torch.tensor(0.0, device=device)).item(),
                 "coordinate/supervised_axes": out.get("coordinate_supervised_axes", torch.tensor(0.0, device=device)).item(),
                 "coordinate/mean_sigma": out.get("coordinate_mean_sigma", torch.tensor(0.0, device=device)).item(),
+                "uma_coordinate/oracle_loss": uma_coordinate_loss.item(),
                 "hidden_topology/collapse_loss": hidden_collapse.item(),
                 "hidden_topology/js_geometry_loss": hidden_js_loss.item(),
                 "uma_contact/alignment_loss": uma_contact_loss.item(),
                 "tropical/temperature": step_temp,
             }
+            metrics.update(uma_coordinate_train_metrics)
             metrics.update(uma_contact_train_metrics)
             for key, value in out.get("attention_metrics", {}).items():
                 metrics[key] = value.item() if torch.is_tensor(value) else value
@@ -450,6 +519,8 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
                 postfix = {"loss": f"{out['loss'].item():.4f}", "acc": f"{out['token_accuracy'].item():.3f}"}
                 if coordinate_loss_weight > 0 and float(metrics.get("coordinate/supervised_axes", 0.0)) > 0.0:
                     postfix["coord"] = f"{metrics['coordinate/rmse']:.3f}"
+                if uma_coordinate_weight > 0 and float(metrics.get("uma_coordinate/oracle_examples", 0.0)) > 0.0:
+                    postfix["umaF"] = f"{metrics.get('uma_coordinate/force_rms_ev_per_a', 0.0):.2f}"
                 if "tropical_attention/top1_margin" in metrics:
                     postfix["trop_margin"] = f"{metrics['tropical_attention/top1_margin']:.3f}"
                 pbar.set_postfix(**postfix)
