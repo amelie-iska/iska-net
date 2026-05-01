@@ -20,7 +20,6 @@ train:
   checkpoint_every: 500
 loss:
   topology_weight: 0.05
-  numeric_diffusion_weight: 0.20
 tropical:
   enabled: true
   temperature: 1.0

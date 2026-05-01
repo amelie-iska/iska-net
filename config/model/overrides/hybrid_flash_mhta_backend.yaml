@@ -1,0 +1,18 @@
+model:
+  attention_backend: hybrid_flash_tropical
+  hybrid_softmax_weight: 1.0
+  hybrid_tropical_weight: 1.0
+  # FlashAttention/SDPA runs in every encoder layer. MHTA is active only on
+  # these zero-based layers; -1 means the final layer for any model depth.
+  hybrid_tropical_layers: [-1]
+  tropical_use_projection: true
+  tropical_use_norm_shift: true
+  tropical_projective_normalize: true
+  tropical_symmetric: true
+  tropical_context_clamp: 12.0
+  tropical_score_floor: -10000.0
+  # MHTA is exact but quadratic. Chunk query positions so long-context
+  # 250M training stays within a 24GB 4090 while preserving the same
+  # max-plus/Hilbert scoring operation.
+  tropical_query_chunk_size: 96
+  tropical_eps: 0.000001

@@ -381,6 +381,48 @@ def _example_temperature_kelvin(example: GraphExample) -> float | None:
         return None
 
 
+def _temperature_norm(example: GraphExample) -> float | None:
+    temp_k = _example_temperature_kelvin(example)
+    if temp_k is None:
+        return None
+    return max(0.0, min(1.0, (float(temp_k) - 300.0) / 100.0))
+
+
+def _has_prefixed_token(tokens: set[str], prefix: str) -> bool:
+    return any(token.startswith(prefix) for token in tokens)
+
+
+def _temperature_diversity_bonus(example: GraphExample, pred_set: set[str]) -> float:
+    temp_norm = _temperature_norm(example)
+    if temp_norm is None:
+        return 0.0
+    diversity_hits = sum(
+        [
+            _has_prefixed_token(pred_set, "TOKEN_MOTION:uma:diversify:"),
+            _has_prefixed_token(pred_set, "TOKEN_MOTION:uma:explore:"),
+            _has_prefixed_token(pred_set, "TOKEN_MOTION:uma:expand:"),
+            _has_prefixed_token(pred_set, "UMA_TRAJ_BIN:diversify:"),
+            _has_prefixed_token(pred_set, "UMA_TRAJ_BIN:explore:"),
+            _has_prefixed_token(pred_set, "UMA_TRAJ_BIN:expand:"),
+            _has_prefixed_token(pred_set, "UMA_INFLUENCE:uma:diversity_pressure:"),
+        ]
+    ) / 7.0
+    stability_hits = sum(
+        [
+            _has_prefixed_token(pred_set, "TOKEN_MOTION:uma:stabilize:"),
+            _has_prefixed_token(pred_set, "TOKEN_MOTION:uma:refine:"),
+            _has_prefixed_token(pred_set, "TOKEN_MOTION:uma:contract:"),
+            _has_prefixed_token(pred_set, "UMA_TRAJ_BIN:stabilize:"),
+            _has_prefixed_token(pred_set, "UMA_TRAJ_BIN:refine:"),
+            _has_prefixed_token(pred_set, "UMA_TRAJ_BIN:contract:"),
+            _has_prefixed_token(pred_set, "UMA_INFLUENCE:uma:score_sharpness:"),
+        ]
+    ) / 7.0
+    high_temp_bonus = temp_norm * diversity_hits
+    low_temp_bonus = (1.0 - temp_norm) * stability_hits
+    return 0.08 * max(high_temp_bonus, low_temp_bonus)
+
+
 def multimodal_metrics_for_example(example: GraphExample) -> dict[str, float]:
     modalities = example.metadata.get("modalities") or []
     if not isinstance(modalities, list):
@@ -478,6 +520,7 @@ def multimodal_oracle_reward(example: GraphExample, predicted_tokens: list[str])
     motion_bonus = 0.05 if any(tok.startswith("TOKEN_MOTION:uma:") for tok in pred_set) else 0.0
     trajectory_bonus = 0.05 if any(tok.startswith("UMA_TRAJ_BIN:") for tok in pred_set) else 0.0
     proxy_bonus = 0.05 if "SEQ_STRUCT_DYN_PROXY:uma_scored" in pred_set else 0.0
+    temperature_diversity_bonus = _temperature_diversity_bonus(example, pred_set)
     base = min(
         0.75,
         0.45 * (sum(family_scores) / max(1, len(family_scores)))
@@ -489,7 +532,8 @@ def multimodal_oracle_reward(example: GraphExample, predicted_tokens: list[str])
         + influence_bonus
         + motion_bonus
         + trajectory_bonus
-        + proxy_bonus,
+        + proxy_bonus
+        + temperature_diversity_bonus,
     )
     temp_k = _example_temperature_kelvin(example)
     if temp_k is not None:

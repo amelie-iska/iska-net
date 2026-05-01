@@ -73,3 +73,23 @@ def test_dataset_reads_with_multiple_dataloader_workers_after_parent_read(tmp_pa
             break
 
     assert len(seen) == 64
+
+
+def test_dataset_reuses_offset_cache(monkeypatch, tmp_path):
+    path = tmp_path / "rows.jsonl"
+    _write_jsonl(path, rows=3)
+
+    first = GraphJsonlDataset(path)
+    assert len(first) == 3
+    offsets_path = path.with_name(f"{path.name}.offsets.u64")
+    meta_path = path.with_name(f"{path.name}.offsets.meta.json")
+    assert offsets_path.exists()
+    assert meta_path.exists()
+
+    def fail_rebuild(*args, **kwargs):
+        raise AssertionError("offset cache was not reused")
+
+    monkeypatch.setattr(dataset_module, "tqdm", fail_rebuild)
+    cached = GraphJsonlDataset(path)
+    assert len(cached) == 3
+    assert cached[2].id == "row-2"

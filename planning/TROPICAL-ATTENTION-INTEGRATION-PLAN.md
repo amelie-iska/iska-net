@@ -43,9 +43,20 @@ model:
   tropical_score_floor: -10000.0
 ```
 
-The backend is model-level because MHTA replaces the attention sublayer inside every transformer block. The existing `tropical:` training section remains the logit-temperature diagnostic schedule; it is related but separate. That distinction is important:
+For full-corpus local training, use the hybrid backend:
+
+```yaml
+model:
+  attention_backend: hybrid_flash_tropical
+  hybrid_softmax_weight: 1.0
+  hybrid_tropical_weight: 1.0
+  hybrid_tropical_layers: [-1]
+```
+
+The backend is model-level because it changes encoder attention. The pure backend replaces the attention sublayer inside every transformer block. The hybrid backend keeps FlashAttention/SDPA in every block and executes MHTA only on the configured layer indices; `-1` means the final encoder layer. The existing `tropical:` training section remains the logit-temperature diagnostic schedule; it is related but separate. That distinction is important:
 
 - `model.attention_backend=tropical` changes the attention kernel.
+- `model.attention_backend=hybrid_flash_tropical` adds a layer-sparse MHTA branch beside fast softmax attention.
 - `tropical.enabled=true` controls tropical diagnostics and annealed logit summaries.
 
 ## Architecture Design
@@ -57,6 +68,7 @@ New classes:
 - `HeadwiseTropicalLinear`: head-specific max-plus linear map with parameter shape `[num_heads, output_dim, input_dim]`.
 - `MultiHeadTropicalAttention`: masked, batch-first MHTA implementation compatible with UGM causal masks and padding masks.
 - `TropicalTransformerEncoderLayer`: norm-first residual block using MHTA plus the existing GELU feed-forward path.
+- `HybridFlashTropicalTransformerEncoderLayer`: norm-first residual block with a FlashAttention/SDPA branch in every layer and a configurable MHTA branch controlled by `enable_tropical`.
 - `TropicalTransformerEncoder`: small stack wrapper with `.layers` and `.norm` so gradient checkpointing remains compatible with the current training loop.
 
 Mask behavior:
@@ -92,7 +104,8 @@ train:
 
 For 4090-scale runs:
 
-- Reduce batch size relative to standard attention because MHTA materializes `[batch, heads, seq, seq, head_dim]` intermediate tensors.
+- Reduce batch size relative to standard attention because unchunked MHTA materializes `[batch, heads, seq, seq, head_dim]` intermediate tensors. The integrated implementation uses `model.tropical_query_chunk_size` to compute the exact same Hilbert-distance scores in query blocks; the 250M hybrid default is `96` for the compact 926-token context on a 24GB RTX 4090.
+- Prefer `hybrid_flash_tropical` with `hybrid_tropical_layers: [-1]` for first full-corpus 250M runs; increase to explicit zero-based layer sets such as `[2, 5]` only after memory and wall-clock probes pass.
 - Keep `max_seq_len` modest for first ablations, typically `256` or `512`, before trying `1024`.
 - Use gradient checkpointing for multi-layer tropical backends.
 - Treat `tropical_context_clamp` as a stability hyperparameter; lower values are safer and may reduce expressivity.
@@ -103,6 +116,7 @@ Recommended first comparisons:
 - standard TokenGT baseline;
 - standard backend plus existing tropical logit diagnostics;
 - full MHTA backend;
+- layer-sparse hybrid FlashAttention/SDPA plus MHTA backend;
 - MHTA backend plus topology diagnostics;
 - MHTA backend plus graph-of-thought/GFlowNet rewards.
 
@@ -118,6 +132,8 @@ Training and validation should log:
 - `tropical_attention/selection_confidence`;
 - `tropical_attention/unique_argmax_rate`;
 - `tropical_attention/context_abs_mean`.
+- `flash_attention/enabled`, `flash_attention/package_kernel`, `flash_attention/sdpa_requested`.
+- `hybrid_attention/enabled`, `hybrid_attention/softmax_weight`, `hybrid_attention/tropical_weight`, `hybrid_attention/tropical_active`.
 
 The metrics should appear in JSONL metrics, W&B, tqdm-derived train progress, and validation output. Existing `tropical/logit_*` metrics remain unchanged and measure output-logit sharpness rather than internal attention geometry.
 
@@ -132,10 +148,11 @@ The integration is acceptable only if:
 5. Validation includes the same metrics.
 6. Config files make the backend explicit and keep standard attention as the default.
 7. README, architecture docs, and the paper describe the limits: MHTA is promising for graph/algorithmic reasoning but not yet proven as a universal replacement for softmax in large autoregressive language training.
+8. Sparse hybrid tests prove that non-tropical layers do not run or receive gradients through the MHTA branch, while configured tropical layers do.
 
 ## Risk Register
 
-- **Memory blowup:** MHTA has explicit pairwise differences with shape `[B,H,S,S,Dh]`; long-context training can become infeasible.
+- **Memory blowup:** MHTA has explicit pairwise differences with shape `[B,H,S,S,Dh]`; long-context training can become infeasible. Layer-sparse hybrid attention and exact query-chunked MHTA are the default mitigations.
 - **Loss instability:** max-plus projections and `expm1` devaluation can create large values. Clamp and near-zero initialization are required.
 - **Task mismatch:** the paper's strongest evidence is algorithmic reasoning; language and molecule graph training need ablations.
 - **Ambiguity loss:** hard tropical selection can hurt tasks requiring calibrated uncertainty.
@@ -150,4 +167,5 @@ The integration is acceptable only if:
 - [x] Add attention metrics to training and validation.
 - [x] Add tiny tropical backend config.
 - [x] Add unit tests for MHTA masking, model forward/backward, and tiny training metrics.
+- [x] Add layer-sparse hybrid controls through `hybrid_tropical_layers`, `hybrid_tropical_every`, and `hybrid_tropical_include_last`.
 - [x] Update README, architecture docs, metrics docs, and the research paper.

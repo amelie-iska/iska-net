@@ -50,7 +50,10 @@ def test_parse_pdb_to_structure_dynamics_row_and_graph(tmp_path: Path, monkeypat
     assert "UGM:modality:all_atom" in ex.target_tokens
     assert "UGM:modality:trajectory" in ex.target_tokens
     assert "UGM:serializer:pdb" in ex.target_tokens
-    assert any(tok.startswith("COORD:x:") for tok in ex.target_tokens)
+    coord_tokens = [tok for tok in ex.target_tokens if tok.startswith("COORD:f")]
+    assert len(coord_tokens) == 18
+    assert "COORD:f0:a0:x:zero" in coord_tokens
+    assert "COORD:f1:a2:z:zero" in coord_tokens
     assert any(edge.type == "molecular_bond" for edge in ex.edges)
     metrics = multimodal_metrics_for_example(ex)
     assert metrics["multimodal/all_atom_present_rate"] == 1.0

@@ -33,6 +33,8 @@ REQUIRED_FILES = [
     "config/train/graph_pretrain_tropical_attention_tiny.yaml",
     "config/train/overrides/tropical_attention_backend.yaml",
     "config/model/overrides/tropical_attention_backend.yaml",
+    "config/model/overrides/hybrid_flash_mhta_backend.yaml",
+    "config/generated/real_full_selected_context_compact.yaml",
     "config/train/multimodal_phase2_tiny.yaml",
     "config/train/multimodal_oracle_gflownet_tiny.yaml",
     "config/validate/multimodal_validation.yaml",

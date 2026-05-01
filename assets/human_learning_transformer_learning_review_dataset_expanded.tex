@@ -1025,7 +1025,9 @@ The update is exactly a weighted max gate over predecessors \(u\). The preceding
 \label{fig:mhta_backend}
 \end{figure}
 
-For UGM, the practical conclusion is a config-gated backend rather than a mandatory replacement. The default model remains a standard TokenGT-style transformer. The optional backend sets \texttt{model.attention\_backend=tropical}, uses masked Hilbert scores, supports causal and padding masks, logs \texttt{tropical\_attention/*} metrics, and is intended first for graph-reasoning ablations. This is important because the paper's empirical evidence is strongest for combinatorial reasoning and long/value/noise out-of-distribution tests; large autoregressive language and molecular graph training remain an experimental scaling question. The most useful first ablations are therefore: standard attention, standard attention with tropical logit diagnostics, full Multi-head Tropical Attention, Multi-head Tropical Attention plus topology diagnostics, and Multi-head Tropical Attention plus verifier/GFlowNet graph-of-thought rewards.
+For UGM, the practical conclusion is a config-gated backend rather than a mandatory replacement. The default model remains a standard TokenGT-style transformer. The pure optional backend sets \texttt{model.attention\_backend=tropical}, uses masked Hilbert scores in every encoder attention block, supports causal and padding masks, logs \texttt{tropical\_attention/*} metrics, and is intended first for graph-reasoning ablations. The training backend used for larger local runs is hybrid and layer-sparse: \texttt{model.attention\_backend=hybrid\_flash\_tropical} keeps FlashAttention or scaled-dot-product softmax attention in every layer, then activates MHTA only on the configured layer set \(\mathcal L_{\rm trop}\). With the default \(\mathcal L_{\rm trop}=\{L\}\), only the final encoder layer pays the explicit Hilbert-distance cost while earlier layers remain on the fast attention path. The implementation computes the exact MHTA scores in query chunks for long-context training, avoiding materialization of the full \([B,H,S,S,d_h]\) difference tensor while preserving the same max-plus/Hilbert operation. This preserves a max-plus computation channel near the decision surface without forcing every intermediate representation through the quadratic MHTA tensor.
+
+This distinction is important because the Tropical Attention paper's empirical evidence is strongest for combinatorial reasoning and long/value/noise out-of-distribution tests; large autoregressive language and molecular graph training remain an experimental scaling question. The most useful first ablations are therefore: standard attention, standard attention with tropical logit diagnostics, full Multi-head Tropical Attention, layer-sparse hybrid FlashAttention+MHTA, layer-sparse hybrid plus topology diagnostics, and layer-sparse hybrid plus verifier/GFlowNet graph-of-thought rewards.
 
 \subsection{Tropical cells and persistent features}
 
@@ -1646,7 +1648,7 @@ The present repository state is already nontrivial: the completed public graph c
 
 SFM/NatureLM and UniGenX currently enter the codebase in two distinct ways. First, their reference repositories and papers provide methodology and reference vocabulary; extracted NatureLM/UniGenX tokens extend the graph vocabulary but are not counted as train/validation/test examples by themselves. Second, selected UniGenX-style public sources are used only after sequence-first sanitization: molecule rows keep SELFIES/SMILES-style strings and non-structure metadata, while coordinate and physics fields are excluded from the first training curriculum. A separate NatureLM-style public-source acquisition path now downloads and prepares official PubChem, UniProt, and RefSeq slices into graph JSONL splits. The default preparation includes the tractable public slices and records provenance; full PubChem CID-SMILES and UniProt TrEMBL are high-cardinality paths that must be enabled deliberately, and Materials Project remains API-gated unless an \texttt{MP\_API\_KEY} export is supplied.
 
-The current model scale is approximately $0.5$B parameters and the near-term training budget is about $2$B consumed tokens, plus GFlowNet and UMA-style oracle training. This budget cannot literally reproduce the raw-token scale of recent looped latent-reasoning language models, which train from multi-trillion-token web corpora and report $7.7$T-token regimes \cite{ZhuOuro2025,FineWebEdu2024,DCLM2024,Dolma2024}. The proper target is therefore two-tiered. First, build a candidate source pool that is large enough and diverse enough to support future scaling. Second, for the $2$B-token run, select a high-density curriculum in which many tokens carry typed edges, verifiers, motifs, graph states, sequence annotations, or oracle-feedback records. The training objective is not raw token maximalism; it is high mutual information between a small number of tokens and the graph-to-graph transformations the model must learn.
+The current model scale is approximately $0.5$B parameters and the near-term training budget is about $2$B consumed tokens, plus GFlowNet and UMA-style oracle training. This budget cannot literally reproduce the raw-token scale of recent looped latent-reasoning language models, which train from multi-trillion-token web corpora and report $7.7$T-token training runs \cite{ZhuOuro2025,FineWebEdu2024,DCLM2024,Dolma2024}. The proper target is therefore two-tiered. First, build a candidate source pool that is large enough and diverse enough to support future scaling. Second, for the $2$B-token run, select a high-density curriculum in which many tokens carry typed edges, verifiers, motifs, graph states, sequence annotations, or oracle-feedback records. The training objective is not raw token maximalism; it is high mutual information between a small number of tokens and the graph-to-graph transformations the model must learn.
 
 The expansion should also correct a split-policy problem. Row-level SHA1 splits are suitable for generic text smoke tests and the broad public selected corpus, but they are not safe as the final policy for scientific multimodal learning. In biochemistry, the same protein family, ligand scaffold, RNA family, or target-disease relation can appear in superficially different rows. In Hebrew morphology, the same root-template family can generate many surface forms that leak across random splits. In graph-reasoning data, relabeling the same graph creates near-duplicates. Hence the expanded corpus must use entity-aware and time-aware splits, with structure-aware splits reserved for evaluation-only resources and future phases. The practical rule is staged: row-hash splits may bootstrap acquisition and smoke training, but every scientific source graduates to a split registry keyed by sequence clusters, scaffolds, RNA families, KG releases and neighborhoods, Hebrew root/template families, and graph isomorphism hashes before it is used for final validation or test claims.
 
@@ -2511,7 +2513,13 @@ and the working fold-contact field is
 \]
 Persistent high mass in \(C_t(i,j)\), especially for sequence-distant pairs, is interpreted as a latent contact hypothesis. The motion \(\Delta C_t=C_{t+1}-C_t\) is a folding-like graph-state motion: contacts form, dissolve, or sharpen as the latent state evolves. For proteins these indices may denote residue or motif tokens; for SELFIES they may denote atom-slot or functional-group tokens; for RNA and DNA they may denote base, loop, or pairing-hypothesis tokens.
 
-The coordinate and frame decoder should emit candidate atom, bond, coordinate, and frame records whose rendered distances agree with this contact field. For generated coordinates \(x_i^f\), define
+The coordinate and frame decoder is autoregressive. It emits candidate atom, bond, coordinate, and frame records as ordinary output graph tokens rather than through a separate continuous coordinate head. In the implementation, a bounded generated position record has the form
+\[
+  \texttt{COORD:f}f\texttt{:a}i\texttt{:}u\texttt{:}b,
+\]
+where \(f\) is a frame index, \(i\) is an atom or residue-associated atom slot, \(u\in\{x,y,z\}\) is the coordinate axis, and \(b\) is a signed coordinate bin such as \(\texttt{neg\_mid}\), \(\texttt{zero}\), or \(\texttt{pos\_near}\). The renderer may map the three axis-bin records for a fixed \((f,i)\) to a representative coordinate or interval. This design keeps generated positions in the same random-order conditional law as text, proof, SELFIES, tool, oracle, atom, and bond records.
+
+For any rendered generated coordinates \(x_i^f\), define
 \[
   \widehat C_f(i,j)=\sigma\left(\frac{r_c-\|x_i^f-x_j^f\|_2}{s_c}\right).
 \]
@@ -2521,6 +2529,21 @@ A self-consistency term
   \sum_{f,i<j}\left(C_t(i,j)-\widehat C_f(i,j)\right)^2
 \]
 does not use a ground-truth structure file. It only ties the model's own attention/embedding/JS contact hypothesis to the generated coordinate/frame graph it emits. UMA then scores the candidate graph at the chosen continuous temperature, with optional serialization only when a downstream renderer is enabled. GFlowNet trajectory balance reinforces graph-state trajectories whose evolving contact maps and generated coordinates receive high UMA reward. Thus attention maps can, in principle, evolve to encode actual folding contacts without supervised structure-file training; the empirical question is how much accuracy this reward-only route can buy under the available compute.
+
+The temperature-conditioned version also uses contact-map entropy as a diversity target. For a graph state with pair mask \(M=\{(i,j):i<j\}\), define the normalized contact entropy
+\[
+  H(C_t)=-\frac{1}{\log |M|}
+  \sum_{(i,j)\in M}p_{ij}\log p_{ij},
+  \qquad
+  p_{ij}=\frac{C_t(i,j)+\epsilon}{\sum_{(a,b)\in M}(C_t(a,b)+\epsilon)} .
+\]
+Let \(d_T=(T-300)/100\) after clipping to \([0,1]\). UMA-feedback rows with high \(T\) should not collapse to a single contact hypothesis; they should preserve broader conformational support. Low-\(T\) rows should sharpen toward stabilization and refinement. The optional entropy-coupling loss is therefore
+\[
+  \mathcal L_{\mathrm{UMA\mbox{-}div}}=
+  \left(H(C_t)-d_T\right)^2+
+  \lambda_E\left(H(C_t^E)-d_T\right)^2,
+\]
+applied only to examples carrying explicit UMA coupling, influence, motion, or trajectory records. This term trains both the attention-contact field and the embedding geometry: high-temperature graph states favor \texttt{explore}, \texttt{diversify}, and \texttt{expand} records, while low-temperature graph states favor \texttt{stabilize}, \texttt{refine}, and \texttt{contract}. It is still oracle-conditioned graph-state learning, not supervised MD trajectory fitting.
 
 \section{Random-order autoregressive graph decoding}
 
@@ -2565,7 +2588,7 @@ Write the symmetrized graph-to-graph likelihood as an expectation under $q$ and 
 
 \subsection{Three generation views}
 
-Random-order autoregression, masked discrete diffusion, and discrete flow matching are treated as three parameterizations of conditional graph-to-graph completion. In the random-order view, a policy chooses the next missing record and samples it. In the masked diffusion view, the graph starts with many mask records and is iteratively denoised. In the discrete flow-matching view, one learns a categorical transport field from a base masked distribution to the data distribution. These views can share the same TokenGT conditional distribution and differ only in schedule, objective, and sampler.
+Random-order autoregression is the active implementation path. A policy chooses the next missing record and samples it from the same TokenGT conditional distribution used for every output record. Masked discrete diffusion and discrete flow matching remain theoretical comparison points and possible future ablations for categorical graph completion; they are not used as active losses in the present training code, and generated structure positions are supervised only as autoregressive coordinate graph tokens.
 
 \begin{lstlisting}[caption={Random-order graph training step.}]
 def training_step(example):
@@ -2613,7 +2636,7 @@ def build_temperature_conditioned_trace(input_graph):
     return traces
 \end{lstlisting}
 
-This is the role of the high-to-low temperature annealing ladder in the current paper. It creates a curriculum of \emph{continuous conditioning features and oracle-scored graph-state decisions}. It should improve whether the model interprets \(T=397.5\,\mathrm K\) differently from \(T=302.5\,\mathrm K\), and whether its GoT/ToT/GFlowNet policy searches broadly at high temperature and more selectively at low temperature. It is not an instruction to train on actual structure or dynamics files.
+This is the role of the high-to-low temperature annealing ladder in the current paper. It creates a curriculum of \emph{continuous conditioning features and oracle-scored graph-state decisions}. It should improve whether the model interprets \(T=397.5\,\mathrm K\) differently from \(T=302.5\,\mathrm K\), and whether its GoT/ToT/GFlowNet policy searches broadly at high temperature and more selectively at low temperature. It is not an instruction to train on actual structure or dynamics files. In the implementation, this distinction is expressed twice: the random-order graph target includes temperature-dependent motion records, and the GFlowNet reward optionally adds a high-\(T\) terminal-state diversity bonus so that hot trajectories are not merely accepted more often but are sampled from a broader set of candidate conformational graph states.
 
 \subsection{GFlowNet objective}
 
@@ -2623,6 +2646,12 @@ R_T(Y_G)=Q_{\rm validity}(Y_G)\,Q_{\rm task}(Y_G)\,
 \exp\{-\beta_T \widehat E_{\mathrm{UMA}}(Y_G)\},
 \]
 where \(\widehat E_{\mathrm{UMA}}\) is a scalar score returned by the external oracle for the candidate graph at the requested continuous temperature. Trajectory balance trains forward and backward policies so terminal graph states are sampled proportional to this reward, while the model learns the \emph{conditioning effect} of \(T\) through the continuous temperature feature and oracle-feedback records.
+
+For conformational search one may further use
+\[
+  R_T^{\mathrm{div}}(Y_G)=R_T(Y_G)\left(1+\eta d_T D(Y_G;\mathcal B_T)\right),
+\]
+where \(d_T=(T-300)/100\), \(\mathcal B_T\) is the current batch or replay set of high-temperature terminal graph states, and \(D\) is a normalized graph-edit or Hamming diversity score over generated conformation/contact records. This term is zero or small at low temperature and positive near \(400\,\mathrm K\). It does not replace the UMA energy/force reward; it tells the sampler that high-temperature oracle queries should cover multiple plausible conformations rather than repeatedly returning one refined low-temperature state.
 
 \begin{theorem}[Trajectory-balance optimum]
 Assume a finite acyclic construction graph, positive terminal rewards, and expressive forward/backward policies. At a global optimum of the trajectory-balance objective, the terminal distribution of the forward policy is proportional to \(R_T(Y_G)\).
@@ -2711,7 +2740,7 @@ For a point cloud of latent embeddings, thought-node states, graph-token states,
 \]
 and ReLU networks are piecewise affine over polyhedral regions. Tropical diagnostics track sharp region changes during graph decisions: selecting a motif, thought branch, tool call, verifier repair, SELFIES edit, or oracle-query action. A tropical regularizer can penalize unstable max selections under small input perturbations unless the verifier or oracle reward strongly supports a sharp transition.
 
-The current implementation separates two mechanisms that are easy to conflate. First, \texttt{tropical} training diagnostics rescale output logits and report entropy, top-1 margin, and confidence; this does not change the attention kernel. Second, \texttt{model.attention\_backend=tropical} activates a masked Multi-head Tropical Attention backend in the TokenGT encoder. That backend logs internal Hilbert-score statistics, distance means, max-selection confidence, argmax diversity, and tropical context scale. Because the intermediate tensor scales as \([B,H,S,S,d_h]\), the backend is an ablation tool for graph-reasoning and algorithmic tasks before it is a default long-context pretraining choice.
+The current implementation separates three mechanisms that are easy to conflate. First, \texttt{tropical} training diagnostics rescale output logits and report entropy, top-1 margin, and confidence; this does not change the attention kernel. Second, \texttt{model.attention\_backend=tropical} activates masked Multi-head Tropical Attention in every TokenGT encoder block. Third, \texttt{model.attention\_backend=hybrid\_flash\_tropical} uses fast softmax attention in every layer and MHTA only on the configured layer set, for example \texttt{hybrid\_tropical\_layers=[-1]} for final-layer MHTA. These backends log internal Hilbert-score statistics, distance means, max-selection confidence, argmax diversity, tropical context scale, FlashAttention/SDPA path use, exact query-chunk size, and the fraction of hybrid layers that actually executed MHTA. Because unchunked MHTA has an intermediate tensor scaling as \([B,H,S,S,d_h]\), full MHTA is an ablation tool for graph-reasoning and algorithmic tasks, while exact query-chunked, layer-sparse hybrid attention is the practical local-training path.
 
 \section{Sampling algorithms}
 
@@ -2888,8 +2917,8 @@ Variant & Expected advantage & Quality & Diversity & Cost \\
 Left-to-right serialization & baseline & & & \\
 Uniform random-order AR & order invariance & & & \\
 Coarse-to-fine random-order AR & reasoning curriculum & & & \\
-Masked discrete diffusion & parallel refinement & & & \\
-Discrete flow matching & categorical transport & & & \\
+Masked discrete diffusion & future ablation only & & & \\
+Discrete flow matching & future ablation only & & & \\
 GFlowNet with UMA reward & reward-weighted diversity & & & \\
 Annealed temperature conditioning & broad-to-selective oracle search & & & \\
 \bottomrule

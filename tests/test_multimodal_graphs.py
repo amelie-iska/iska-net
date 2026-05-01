@@ -313,6 +313,35 @@ def test_uma_proxy_reward_is_temperature_conditioned(monkeypatch):
     partial = ["UGM:graph_to_graph"]
     assert multimodal_oracle_reward(hot, partial) > multimodal_oracle_reward(cool, partial)
 
+    diverse = [
+        "UGM:graph_to_graph",
+        "UGM:oracle:uma_feedback",
+        "TEMP:400K",
+        "SEQ_STRUCT_DYN_PROXY:uma_scored",
+        "TOKEN_MOTION:uma:diversify:b54",
+        "TOKEN_MOTION:uma:explore:b50",
+        "TOKEN_MOTION:uma:expand:b50",
+        "UMA_TRAJ_BIN:diversify:b54",
+        "UMA_TRAJ_BIN:explore:b50",
+        "UMA_TRAJ_BIN:expand:b50",
+        "UMA_INFLUENCE:uma:diversity_pressure:b54",
+    ]
+    stable = [
+        "UGM:graph_to_graph",
+        "UGM:oracle:uma_feedback",
+        "TEMP:300K",
+        "SEQ_STRUCT_DYN_PROXY:uma_scored",
+        "TOKEN_MOTION:uma:stabilize:b56",
+        "TOKEN_MOTION:uma:refine:b52",
+        "TOKEN_MOTION:uma:contract:b45",
+        "UMA_TRAJ_BIN:stabilize:b56",
+        "UMA_TRAJ_BIN:refine:b52",
+        "UMA_TRAJ_BIN:contract:b45",
+        "UMA_INFLUENCE:uma:score_sharpness:b60",
+    ]
+    assert multimodal_oracle_reward(hot, diverse) > multimodal_oracle_reward(hot, stable)
+    assert multimodal_oracle_reward(cool, stable) > multimodal_oracle_reward(cool, diverse)
+
 
 def test_motif_source_parsers_and_structure_derived_windows(tmp_path):
     prosite = tmp_path / "prosite.dat"

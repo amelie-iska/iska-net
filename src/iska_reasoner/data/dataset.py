@@ -97,8 +97,68 @@ class GraphJsonlDataset(Dataset[GraphExample]):
         if len(self) == 0:
             raise ValueError(f"No examples in {self.path}")
 
+    def _offset_cache_paths(self) -> tuple[Path, Path]:
+        return (
+            self.path.with_name(f"{self.path.name}.offsets.u64"),
+            self.path.with_name(f"{self.path.name}.offsets.meta.json"),
+        )
+
+    def _load_offsets_cache(self, file_size: int, mtime_ns: int) -> bool:
+        if os.environ.get("UGM_DISABLE_JSONL_OFFSET_CACHE") == "1":
+            return False
+        offsets_path, meta_path = self._offset_cache_paths()
+        if not offsets_path.exists() or not meta_path.exists():
+            return False
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            if (
+                meta.get("version") != 1
+                or int(meta.get("file_size", -1)) != file_size
+                or int(meta.get("mtime_ns", -1)) != mtime_ns
+            ):
+                return False
+            offsets = array("Q")
+            with offsets_path.open("rb") as handle:
+                offsets.fromfile(handle, int(meta.get("rows", 0)))
+        except (OSError, ValueError, json.JSONDecodeError, EOFError):
+            return False
+        if len(offsets) != int(meta.get("rows", -1)):
+            return False
+        self.offsets = offsets
+        return True
+
+    def _save_offsets_cache(self, file_size: int, mtime_ns: int) -> None:
+        if os.environ.get("UGM_DISABLE_JSONL_OFFSET_CACHE") == "1":
+            return
+        offsets_path, meta_path = self._offset_cache_paths()
+        offsets_tmp = offsets_path.with_suffix(offsets_path.suffix + ".tmp")
+        meta_tmp = meta_path.with_suffix(meta_path.suffix + ".tmp")
+        meta = {
+            "version": 1,
+            "source": self.path.name,
+            "file_size": file_size,
+            "mtime_ns": mtime_ns,
+            "rows": len(self.offsets),
+        }
+        try:
+            with offsets_tmp.open("wb") as handle:
+                self.offsets.tofile(handle)
+            meta_tmp.write_text(json.dumps(meta, sort_keys=True), encoding="utf-8")
+            offsets_tmp.replace(offsets_path)
+            meta_tmp.replace(meta_path)
+        except OSError:
+            for tmp in (offsets_tmp, meta_tmp):
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+
     def _build_offsets(self) -> None:
-        file_size = self.path.stat().st_size if self.path.exists() else 0
+        stat = self.path.stat()
+        file_size = stat.st_size
+        mtime_ns = stat.st_mtime_ns
+        if self._load_offsets_cache(file_size=file_size, mtime_ns=mtime_ns):
+            return
         show_progress = file_size >= 64 * 1024 * 1024
         with self.path.open("rb") as handle:
             with tqdm(
@@ -117,6 +177,7 @@ class GraphJsonlDataset(Dataset[GraphExample]):
                     if line.strip():
                         self.offsets.append(offset)
                     pbar.update(len(line))
+        self._save_offsets_cache(file_size=file_size, mtime_ns=mtime_ns)
 
     def _row_at(self, index: int) -> dict[str, Any]:
         pid = os.getpid()

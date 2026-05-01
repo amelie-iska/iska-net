@@ -22,6 +22,7 @@ from iska_reasoner.topology import (
     hidden_js_geometry_loss,
     hidden_state_topology_metrics,
     hidden_topology_collapse_loss,
+    uma_contact_alignment_loss,
 )
 from iska_reasoner.training.checkpointing import load_checkpoint, save_checkpoint
 from iska_reasoner.training.metrics import MetricAverager
@@ -173,7 +174,7 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
         max_source_tokens=int(cfg["data"].get("max_source_tokens", 128)),
         max_target_tokens=int(cfg["data"].get("max_target_tokens", 64)),
         max_seq_len=int(cfg["model"].get("max_seq_len", 256)),
-        max_numeric_targets=int(cfg["data"].get("max_numeric_targets", cfg["model"].get("numeric_dim", 0))),
+        max_numeric_targets=0,
         order_mode=cfg["data"].get("order_mode", "sample"),
         seed=seed,
     )
@@ -218,11 +219,12 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
     model_cfg["vocab_size"] = len(vocab.token_to_id)
     model = RandomOrderTokenGT(RandomOrderTokenGTConfig(**model_cfg))
     logger.info(
-        "Model attention backend: %s tropical_projection=%s tropical_norm_shift=%s tropical_projective_normalize=%s",
+        "Model attention backend: %s tropical_projection=%s tropical_norm_shift=%s tropical_projective_normalize=%s tropical_query_chunk_size=%s",
         model.cfg.attention_backend,
         model.cfg.tropical_use_projection,
         model.cfg.tropical_use_norm_shift,
         model.cfg.tropical_projective_normalize,
+        model.cfg.tropical_query_chunk_size,
     )
     device = get_device(cfg["run"].get("device", "cuda"))
     model.to(device)
@@ -269,13 +271,17 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
     ckpt_enabled = ckpt_every > 0
     max_grad_norm = float(cfg["train"].get("max_grad_norm", 1.0))
     topo_weight = float(cfg.get("loss", {}).get("topology_weight", 0.0))
-    numeric_weight = float(cfg.get("loss", {}).get("numeric_diffusion_weight", 0.0))
     hidden_topology_cfg = cfg.get("hidden_topology", {})
     hidden_topology_enabled = bool(hidden_topology_cfg.get("enabled", False))
     hidden_topology_every = max(1, int(hidden_topology_cfg.get("log_every", log_every)))
     hidden_topology_max_points = int(hidden_topology_cfg.get("max_points", 64))
     hidden_topology_bins = int(hidden_topology_cfg.get("bins", 8))
     folding_contact_enabled = bool(hidden_topology_cfg.get("folding_contact_enabled", False))
+    folding_contact_include_hidden = bool(hidden_topology_cfg.get("folding_contact_include_hidden", False))
+    uma_contact_weight = float(cfg.get("loss", {}).get("uma_contact_alignment_weight", 0.0))
+    uma_contact_embedding_weight = float(cfg.get("loss", {}).get("uma_contact_embedding_weight", 0.5))
+    uma_contact_temperature_diversity_weight = float(cfg.get("loss", {}).get("uma_contact_temperature_diversity_weight", 0.5))
+    uma_contact_max_tokens = int(cfg.get("loss", {}).get("uma_contact_max_tokens", 192))
     hidden_collapse_weight = float(cfg.get("loss", {}).get("hidden_topology_collapse_weight", 0.0))
     hidden_collapse_margin = float(hidden_topology_cfg.get("collapse_margin", 0.5))
     hidden_js_weight = float(cfg.get("loss", {}).get("hidden_js_geometry_weight", 0.0))
@@ -313,14 +319,13 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
                     "attention_mask",
                     "causal_mask",
                     "labels",
-                ]}, topology_targets=batch.get("topology_features"), numeric_targets=batch.get("numeric_targets"), numeric_mask=batch.get("numeric_mask"))
+                ]}, topology_targets=batch.get("topology_features"))
                 full_loss = out["loss"]
                 if topo_weight > 0 and "topology_loss" in out:
                     full_loss = full_loss + topo_weight * out["topology_loss"]
-                if numeric_weight > 0 and "numeric_diffusion_loss" in out:
-                    full_loss = full_loss + numeric_weight * out["numeric_diffusion_loss"]
                 hidden_collapse = torch.tensor(0.0, device=device)
                 hidden_js_loss = torch.tensor(0.0, device=device)
+                uma_contact_loss = torch.tensor(0.0, device=device)
                 if hidden_collapse_weight > 0:
                     hidden_collapse = hidden_topology_collapse_loss(
                         out["hidden_states"],
@@ -337,6 +342,25 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
                         max_points=hidden_topology_max_points,
                     )
                     full_loss = full_loss + hidden_js_weight * hidden_js_loss
+                if uma_contact_weight > 0:
+                    attention_contact_maps = out.get("attention_contact_maps")
+                    contact = folding_contact_field(
+                        attention_maps=attention_contact_maps,
+                        hidden_states=None if attention_contact_maps is not None else out["hidden_states"],
+                        token_mask=batch["attention_mask"],
+                    )
+                    uma_contact_loss, uma_contact_train_metrics = uma_contact_alignment_loss(
+                        contact,
+                        out["hidden_states"],
+                        batch.get("examples", []),
+                        batch["attention_mask"],
+                        embedding_weight=uma_contact_embedding_weight,
+                        temperature_diversity_weight=uma_contact_temperature_diversity_weight,
+                        max_tokens=uma_contact_max_tokens,
+                    )
+                    full_loss = full_loss + uma_contact_weight * uma_contact_loss
+                else:
+                    uma_contact_train_metrics = {}
                 if not bool(torch.isfinite(full_loss.detach()).all().item()):
                     emergency_path = Path(output_dir) / f"checkpoint_nonfinite_step_{step}_micro_{micro_step}.pt"
                     save_checkpoint(emergency_path, model, optimizer, step, cfg)
@@ -345,9 +369,9 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
                         "loss": _scalar_or_none(out.get("loss")),
                         "total_loss": _scalar_or_none(full_loss),
                         "topology_loss": _scalar_or_none(out.get("topology_loss")),
-                        "numeric_diffusion_loss": _scalar_or_none(out.get("numeric_diffusion_loss")),
                         "hidden_topology/collapse_loss": _scalar_or_none(hidden_collapse),
                         "hidden_topology/js_geometry_loss": _scalar_or_none(hidden_js_loss),
+                        "uma_contact/alignment_loss": _scalar_or_none(uma_contact_loss),
                     }
                     raise FloatingPointError(
                         "Non-finite training loss detected "
@@ -365,9 +389,10 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
                 "topology_loss": out.get("topology_loss", torch.tensor(0.0, device=device)).item(),
                 "hidden_topology/collapse_loss": hidden_collapse.item(),
                 "hidden_topology/js_geometry_loss": hidden_js_loss.item(),
-                "numeric_diffusion_loss": out.get("numeric_diffusion_loss", torch.tensor(0.0, device=device)).item(),
+                "uma_contact/alignment_loss": uma_contact_loss.item(),
                 "tropical/temperature": step_temp,
             }
+            metrics.update(uma_contact_train_metrics)
             for key, value in out.get("attention_metrics", {}).items():
                 metrics[key] = value.item() if torch.is_tensor(value) else value
             metrics.update(logit_diagnostics(out["logits"], batch["labels"], temperature=step_temp))
@@ -385,11 +410,14 @@ def run_training_stage(cfg: dict[str, Any]) -> None:
                     )
                 )
             if folding_contact_enabled and (step % hidden_topology_every == 0):
+                attention_contact_maps = out.get("attention_contact_maps")
                 contact = folding_contact_field(
-                    hidden_states=out["hidden_states"],
+                    attention_maps=attention_contact_maps,
+                    hidden_states=out["hidden_states"] if (attention_contact_maps is None or folding_contact_include_hidden) else None,
                     token_mask=batch["attention_mask"],
                 )
                 metrics.update(folding_contact_metrics(contact, batch["attention_mask"]))
+                metrics["folding_contact/attention_map_enabled"] = 1.0 if attention_contact_maps is not None else 0.0
             avg.update(metrics)
 
             if micro_step % grad_accum == 0:

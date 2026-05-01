@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import torch
 import torch.nn.functional as F
 
@@ -49,6 +51,7 @@ def embedding_contact_fields(
     *,
     euclidean_scale: float | None = None,
     js_scale: float = 0.25,
+    exact_js_max_tokens: int = 256,
     eps: float = 1e-8,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Build Euclidean and Jensen-Shannon contact fields from hidden states."""
@@ -71,9 +74,12 @@ def embedding_contact_fields(
     euclidean_field = torch.exp(-torch.square(distances / scale))
 
     probs = F.softmax(hidden, dim=-1)
-    js = _pairwise_js_distance(probs)
-    js_scale_t = torch.tensor(float(js_scale), device=hidden.device).clamp_min(eps)
-    js_field = torch.exp(-torch.square(js / js_scale_t))
+    if hidden.size(1) <= int(exact_js_max_tokens):
+        js = _pairwise_js_distance(probs)
+        js_scale_t = torch.tensor(float(js_scale), device=hidden.device).clamp_min(eps)
+        js_field = torch.exp(-torch.square(js / js_scale_t))
+    else:
+        js_field = _probability_overlap_contact(probs, eps=eps)
 
     return _mask_and_zero_diag(euclidean_field, token_mask), _mask_and_zero_diag(js_field, token_mask)
 
@@ -196,6 +202,127 @@ def folding_attention_coordinate_consistency_loss(
     return F.mse_loss(field[mask], target[mask])
 
 
+def uma_contact_alignment_loss(
+    contact_field: torch.Tensor,
+    hidden_states: torch.Tensor,
+    examples: list[Any],
+    token_mask: torch.Tensor | None = None,
+    *,
+    embedding_weight: float = 0.5,
+    temperature_diversity_weight: float = 0.5,
+    max_tokens: int = 192,
+) -> tuple[torch.Tensor, dict[str, float]]:
+    """Align contact and embedding geometry to UMA feedback records.
+
+    The target is derived only from explicit UMA-stage target records such as
+    ``ATTN_BIN:*:bNN``, ``TOKEN_COUPLING:uma:*:bNN``,
+    ``UMA_INFLUENCE:uma:*:bNN``, and ``UMA_TRAJ_BIN:*:bNN``. This keeps
+    ordinary sequence/function rows free of hidden structure supervision while
+    allowing oracle-scored rows to shape both contact-map density and embedding
+    geometry.
+    """
+
+    if not examples:
+        zero = hidden_states.sum() * 0.0
+        return zero, {
+            "uma_contact/alignment_examples": 0.0,
+            "uma_contact/target_strength": 0.0,
+            "uma_contact/contact_strength": 0.0,
+            "uma_contact/embedding_strength": 0.0,
+            "uma_contact/temperature_diversity_target": 0.0,
+            "uma_contact/contact_entropy": 0.0,
+            "uma_contact/embedding_entropy": 0.0,
+        }
+
+    field = contact_field.float()
+    hidden = hidden_states.float()
+    if field.dim() == 2:
+        field = field.unsqueeze(0)
+    if hidden.dim() == 2:
+        hidden = hidden.unsqueeze(0)
+    batch = min(field.size(0), hidden.size(0), len(examples))
+    if batch == 0:
+        zero = hidden_states.sum() * 0.0
+        return zero, {
+            "uma_contact/alignment_examples": 0.0,
+            "uma_contact/target_strength": 0.0,
+            "uma_contact/contact_strength": 0.0,
+            "uma_contact/embedding_strength": 0.0,
+            "uma_contact/temperature_diversity_target": 0.0,
+            "uma_contact/contact_entropy": 0.0,
+            "uma_contact/embedding_entropy": 0.0,
+        }
+    field = field[:batch]
+    hidden = hidden[:batch]
+    mask = _as_batch_mask(token_mask, batch, field.size(-1), field.device) if token_mask is not None else torch.ones(batch, field.size(-1), dtype=torch.bool, device=field.device)
+    if field.size(-1) > max(2, int(max_tokens)):
+        idx = _sample_token_indices(field.size(-1), int(max_tokens), field.device)
+        field = field.index_select(-2, idx).index_select(-1, idx)
+        hidden = hidden.index_select(1, idx)
+        mask = mask.index_select(1, idx)
+    emb_field, js_field = embedding_contact_fields(hidden, token_mask=mask)
+    embedding_proxy = 0.5 * (emb_field + js_field)
+
+    losses: list[torch.Tensor] = []
+    targets: list[float] = []
+    diversity_targets: list[float] = []
+    contact_strengths: list[torch.Tensor] = []
+    embedding_strengths: list[torch.Tensor] = []
+    contact_entropies: list[torch.Tensor] = []
+    embedding_entropies: list[torch.Tensor] = []
+    for row, example in enumerate(examples[:batch]):
+        target = _uma_feedback_strength(example)
+        if target is None:
+            continue
+        pair_mask = torch.triu(torch.ones(field.size(-1), field.size(-1), dtype=torch.bool, device=field.device), diagonal=1)
+        pair_mask = pair_mask & (mask[row].unsqueeze(0) & mask[row].unsqueeze(1))
+        if not bool(pair_mask.any()):
+            continue
+        target_t = field.new_tensor(float(target))
+        contact_strength = field[row][pair_mask].mean()
+        embedding_strength = embedding_proxy[row][pair_mask].mean()
+        loss = F.mse_loss(contact_strength, target_t)
+        if embedding_weight > 0:
+            loss = loss + float(embedding_weight) * F.mse_loss(embedding_strength, target_t)
+        diversity_target = _temperature_diversity_target(example)
+        if diversity_target is not None and temperature_diversity_weight > 0:
+            diversity_t = field.new_tensor(float(diversity_target))
+            contact_entropy = _normalized_pair_entropy(field[row], pair_mask)
+            embedding_entropy = _normalized_pair_entropy(embedding_proxy[row], pair_mask)
+            loss = loss + float(temperature_diversity_weight) * F.mse_loss(contact_entropy, diversity_t)
+            if embedding_weight > 0:
+                loss = loss + float(temperature_diversity_weight) * float(embedding_weight) * F.mse_loss(embedding_entropy, diversity_t)
+            diversity_targets.append(float(diversity_target))
+            contact_entropies.append(contact_entropy.detach())
+            embedding_entropies.append(embedding_entropy.detach())
+        losses.append(loss)
+        targets.append(float(target))
+        contact_strengths.append(contact_strength.detach())
+        embedding_strengths.append(embedding_strength.detach())
+
+    if not losses:
+        zero = hidden_states.sum() * 0.0
+        return zero, {
+            "uma_contact/alignment_examples": 0.0,
+            "uma_contact/target_strength": 0.0,
+            "uma_contact/contact_strength": 0.0,
+            "uma_contact/embedding_strength": 0.0,
+            "uma_contact/temperature_diversity_target": 0.0,
+            "uma_contact/contact_entropy": 0.0,
+            "uma_contact/embedding_entropy": 0.0,
+        }
+    loss = torch.stack(losses).mean()
+    return loss, {
+        "uma_contact/alignment_examples": float(len(losses)),
+        "uma_contact/target_strength": float(sum(targets) / max(1, len(targets))),
+        "uma_contact/contact_strength": float(torch.stack(contact_strengths).mean().item()),
+        "uma_contact/embedding_strength": float(torch.stack(embedding_strengths).mean().item()),
+        "uma_contact/temperature_diversity_target": float(sum(diversity_targets) / max(1, len(diversity_targets))) if diversity_targets else 0.0,
+        "uma_contact/contact_entropy": float(torch.stack(contact_entropies).mean().item()) if contact_entropies else 0.0,
+        "uma_contact/embedding_entropy": float(torch.stack(embedding_entropies).mean().item()) if embedding_entropies else 0.0,
+    }
+
+
 def _pairwise_js_distance(probs: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
     p = probs.clamp_min(eps)
     p = p / p.sum(dim=-1, keepdim=True).clamp_min(eps)
@@ -205,6 +332,29 @@ def _pairwise_js_distance(probs: torch.Tensor, eps: float = 1e-8) -> torch.Tenso
     js = 0.5 * (p2 * (p2.log() - m.clamp_min(eps).log())).sum(dim=-1)
     js = js + 0.5 * (q * (q.log() - m.clamp_min(eps).log())).sum(dim=-1)
     return js.clamp_min(0.0).sqrt()
+
+
+def _probability_overlap_contact(probs: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+    """Memory-safe probability-geometry proxy for long hidden sequences.
+
+    Exact pairwise Jensen-Shannon distance materializes ``[B,N,N,D]``. That is
+    fine for small diagnostics and not fine inside 926-token training batches.
+    For long sequences, use normalized probability overlap as a bounded
+    contact-like field with the same shape.
+    """
+
+    p = probs.float().clamp_min(eps)
+    p = p / p.sum(dim=-1, keepdim=True).clamp_min(eps)
+    overlap = torch.bmm(p, p.transpose(1, 2))
+    denom = torch.linalg.vector_norm(p, ord=2, dim=-1).clamp_min(eps)
+    overlap = overlap / (denom.unsqueeze(2) * denom.unsqueeze(1)).clamp_min(eps)
+    return overlap.clamp(0.0, 1.0)
+
+
+def _sample_token_indices(n: int, max_tokens: int, device: torch.device) -> torch.Tensor:
+    if n <= max_tokens:
+        return torch.arange(n, device=device)
+    return torch.linspace(0, n - 1, steps=max_tokens, device=device).round().to(torch.long).unique(sorted=True)
 
 
 def _as_batch_mask(mask: torch.Tensor, batch: int, n: int, device: torch.device) -> torch.Tensor:
@@ -224,3 +374,89 @@ def _mask_and_zero_diag(field: torch.Tensor, token_mask: torch.Tensor | None) ->
     eye = torch.eye(out.size(-1), dtype=torch.bool, device=out.device)
     out = out.masked_fill(eye.unsqueeze(0), 0.0)
     return out
+
+
+def _uma_feedback_strength(example: Any) -> float | None:
+    tokens = getattr(example, "target_tokens", None) or []
+    strengths: list[float] = []
+    uma_prefixes = (
+        "ATTN_BIN:",
+        "ATTN_COARSE:",
+        "TOKEN_COUPLING:uma:",
+        "UMA_INFLUENCE:uma:",
+        "TOKEN_MOTION:uma:",
+        "UMA_TRAJ_BIN:",
+    )
+    for token in tokens:
+        if not isinstance(token, str) or not token.startswith(uma_prefixes):
+            continue
+        value = _feedback_token_value(token)
+        if value is not None:
+            strengths.append(value)
+    if any(token == "SEQ_STRUCT_DYN_PROXY:uma_scored" for token in tokens):
+        strengths.append(0.5)
+    if not strengths:
+        return None
+    return max(0.0, min(1.0, sum(strengths) / len(strengths)))
+
+
+def _temperature_diversity_target(example: Any) -> float | None:
+    if _uma_feedback_strength(example) is None:
+        return None
+    temp_k = None
+    for node in getattr(example, "nodes", []) or []:
+        if getattr(node, "type", "") != "temperature":
+            continue
+        features = getattr(node, "features", {}) or {}
+        for key in ("kelvin", "kelvin_clamped", "temperature_k"):
+            try:
+                temp_k = float(features[key])
+                break
+            except Exception:
+                pass
+        if temp_k is None:
+            try:
+                temp_k = float(str(getattr(node, "value", "")).rstrip("Kk"))
+            except Exception:
+                pass
+        if temp_k is not None:
+            break
+    if temp_k is None:
+        metadata = getattr(example, "metadata", {}) or {}
+        try:
+            temp_k = float(metadata.get("temperature"))
+        except Exception:
+            return None
+    return max(0.0, min(1.0, (float(temp_k) - 300.0) / 100.0))
+
+
+def _feedback_token_value(token: str) -> float | None:
+    tail = token.rsplit(":", 1)[-1]
+    if len(tail) == 3 and tail.startswith("b") and tail[1:].isdigit():
+        return int(tail[1:]) / 63.0
+    coarse = {
+        "low": 0.20,
+        "medium": 0.50,
+        "high": 0.80,
+        "critical": 1.00,
+        "stabilize": 0.70,
+        "refine": 0.75,
+        "diversify": 0.35,
+        "explore": 0.40,
+        "contract": 0.65,
+        "expand": 0.45,
+        "trajectory_follow": 0.80,
+        "oracle_reject": 0.10,
+        "oracle_accept": 0.90,
+    }
+    return coarse.get(tail)
+
+
+def _normalized_pair_entropy(values: torch.Tensor, pair_mask: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+    selected = values[pair_mask].float().clamp_min(0.0)
+    if selected.numel() <= 1:
+        return selected.sum() * 0.0
+    probs = selected + eps
+    probs = probs / probs.sum().clamp_min(eps)
+    entropy = -(probs * probs.clamp_min(eps).log()).sum()
+    return entropy / torch.log(values.new_tensor(float(selected.numel())).clamp_min(2.0))

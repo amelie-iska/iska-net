@@ -41,7 +41,7 @@ def main() -> None:
     device_name = args.device or val_cfg.get("device", "cuda")
     model, vocab, device = load_model_for_inference(checkpoint, vocab_path, device_name)
     dataset = GraphJsonlDataset(data_path)
-    collator = RandomOrderCollator(vocab=vocab, order_mode="first", max_seq_len=model.cfg.max_seq_len, max_numeric_targets=model.cfg.numeric_dim)
+    collator = RandomOrderCollator(vocab=vocab, order_mode="first", max_seq_len=model.cfg.max_seq_len, max_numeric_targets=0)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, collate_fn=collator)
     hidden_topology_cfg = val_cfg.get("hidden_topology") or cfg.get("hidden_topology")
     metrics = evaluate_model(

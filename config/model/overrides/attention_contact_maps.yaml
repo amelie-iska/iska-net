@@ -1,0 +1,7 @@
+model:
+  # Materialize detached MHTA score-derived attention/contact maps as
+  # [batch, active_layers, heads, tokens, tokens]. Keep this disabled for
+  # maximum-throughput Flash/SDPA training unless folding-contact diagnostics
+  # or coordinate/contact consistency losses are being measured.
+  emit_attention_contact_maps: true
+  attention_contact_maps_detach: true

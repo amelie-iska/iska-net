@@ -9,7 +9,7 @@ This repo is a training scaffold for "*SGRM*" (Scientific Graph Reasoning Model)
 **Why include MHTA (multi-head tropical attention)?**
 The [Tropical Attention](https://arxiv.org/abs/2505.17190) paper gives the exact reason MHTA belongs in UGM as an optional graph-reasoning backend: it proves that MHTA stacks universally approximate tropical circuits and realize tropical transitive closure by composition. In the paper's words, MHTA is a universal approximator of max-plus dynamic programming for combinatorial optimization with closure; the relevant proof references are Theorem C.3, Corollary C.3.1, and Theorem 3.2.
 
-That matters because many graph reasoning tasks are max-plus or min-plus computations in disguise: shortest paths, reachability, matching, dependency closure, Viterbi-style proof/state selection, verifier-guided branch choice, and graph-of-thought expansion. The paper also reports stronger out-of-distribution generalization in both length and value regimes, with robustness to perturbative noise, compared with softmax and recurrent baselines on combinatorial reasoning tasks. UGM therefore exposes MHTA behind `model.attention_backend: tropical` so we can test that inductive bias on the same graph records, validation, W&B traces, and training curriculum as the standard TokenGT-style softmax backend.
+That matters because many graph reasoning tasks are max-plus or min-plus computations in disguise: shortest paths, reachability, matching, dependency closure, Viterbi-style proof/state selection, verifier-guided branch choice, and graph-of-thought expansion. The paper also reports stronger out-of-distribution generalization across length and value shifts, with robustness to perturbative noise, compared with softmax and recurrent baselines on combinatorial reasoning tasks. UGM therefore exposes MHTA as a pure backend with `model.attention_backend: tropical` and as the default enabled training path with `model.attention_backend: hybrid_flash_tropical`, which runs a FlashAttention-2/SDPA softmax branch in every encoder layer and activates MHTA only on configured layers. The default full-training override uses `hybrid_tropical_layers: [-1]`, so the final layer receives the max-plus/Hilbert-projective computation while earlier layers stay on the fast attention path.
 
 Proof-level details are in the paper PDF linked above and in the local TeX source. See the subsection `Multi-head Tropical Attention as an optional UGM backend` in [`assets/human_learning_transformer_learning_review_dataset_expanded.tex`](./assets/human_learning_transformer_learning_review_dataset_expanded.tex), which includes:
 
@@ -35,13 +35,13 @@ The implemented path is intentionally practical for one RTX 4090: graph-rich exa
 - Dataset acquisition manifest and small downloaded samples in `data/raw/`.
 - Graphification scripts for synthetic, math, code, Lean/proof, and molecule rows.
 - Random-order autoregressive decoding with `<POS>` query tokens.
-- Compact TokenGT-style model using node/edge endpoint identifier embeddings, optional gradient checkpointing, local LoRA adapters, and an optional Multi-Head Tropical Attention backend.
+- Compact TokenGT-style model using node/edge endpoint identifier embeddings, optional gradient checkpointing, local LoRA adapters, a pure Multi-Head Tropical Attention backend, and a hybrid Flash-eligible SDPA plus MHTA backend.
 - Training runner with tqdm, JSONL metrics, checkpoints, resume support, validation, AMP, gradient clipping, schedulers, and optional W&B.
 - Topology summaries, tropical logit diagnostics, Tropical Attention metrics, verifier adapters, and curation tooling.
 - Domain vertical slices for code/unit tests, Lean availability/compile checks, and RDKit-backed molecule graphs when RDKit is installed.
 - PLAN-D/PLAN-G science-data slices for SFM/NatureLM reference vocabulary and UniGenX-style molecule/material graphs.
 - PLAN-E Hebrew morphology/root slices with UD Hebrew HTB, Hebrew QA, Nakdimon diacritization, root-template graphs, and root-extension GFlowNet training.
-- PLAN-F/PLAN-G deferred-component closure: optional advanced topology backends, tropical attention/parser utilities, numeric diffusion targets, audio feature extraction, local SFM/NatureLM and UniGenX science-source preparation, bioactivity/docking/protein graphification, safer verifier execution, stronger curation, and context-aware learned-backward GFlowNets.
+- PLAN-F/PLAN-G deferred-component closure: optional advanced topology backends, tropical attention/parser utilities, autoregressive coordinate/property graph tokens, audio feature extraction, local SFM/NatureLM and UniGenX science-source preparation, bioactivity/docking/protein graphification, safer verifier execution, stronger curation, and context-aware learned-backward GFlowNets.
 - PLAN-H UGM multimodal graph-to-graph phase: sequence-first vocabulary for text/protein/SELFIES/SMILES/DNA/RNA/tool/oracle records, local-source preparation, continuous temperature conditioning, UMA-conditioned coupling/motion bins, function-description alignment, and oracle-feedback GFlowNet rewards.
 - Full motif vocabulary path for sequence-first multimodal training: PROSITE, InterPro, Rfam, core sequence motifs, safe `SEQ_MOTIF_FROM_STRUCTURE:*` vocabulary entries, and optional non-structure molecule descriptors are parsed into graph-record vocabulary tokens; row-local structure motifs from coordinates/contact labels are evaluation/future-phase only.
 - Structure/dynamics sources are validation-only by default. Actual PDB/mmCIF/SDF/trajectory, coordinate, energy, and force training remains disabled unless a later explicit phase enables it.
@@ -140,7 +140,7 @@ To hold the same corpus, objectives, context limits, validation cadence, UMA pre
 ./scripts/run_full_phase1_phase2_training_250m.sh
 ```
 
-The script writes to `logs/full_training_sequence/<RUN_ID>/` and updates `logs/full_training_sequence/latest`. It uses `data/processed/real_full_selected_mix/`, honors manifest-local row caps such as the RNA/DNA caps, enforces `MAX_GRAPH_TOKENS=5000000000` by default, and generates a context config at `config/generated/real_full_selected_context_2x.yaml` so the model context is roughly 2x the largest row. The phase wrapper defaults to `TRAINING_FIRST=1`, `SKIP_REFERENCE_REFRESH_IF_READY=1`, `SKIP_INTERPRO_MOTIF_DOWNLOAD=1`, and `REQUIRE_UMA_WEIGHTS=1`, so if the graph corpus and reference vocabularies already exist it proceeds to training while still verifying/downloading the required FairChem/UMA weights before oracle stages. Phase-1 training is full-corpus by default: the runner writes a per-run override with `max_steps: full_epoch` and `FULL_TRAIN_EPOCHS=1.0`, so optimizer steps are computed from the actual train split length, batch size, and gradient accumulation rather than from a fixed smoke-test cap. Training stages automatically append `config/train/overrides/wandb_online.yaml`; shell stages and commands also log W&B runner events when `WANDB_ENABLED=1`.
+The script writes to `logs/full_training_sequence/<RUN_ID>/` and updates `logs/full_training_sequence/latest`. It uses `data/processed/real_full_selected_mix/`, honors manifest-local row caps such as the RNA/DNA caps, and enforces `MAX_GRAPH_TOKENS=5000000000` by default. Standard softmax training uses the 2x context config at `config/generated/real_full_selected_context_2x.yaml`; `ENABLE_TROPICAL_ATTENTION=1` defaults to the compact exact-coverage context config at `config/generated/real_full_selected_context_compact.yaml` because MHTA memory scales quadratically with sequence length. The phase wrapper defaults to `TRAINING_FIRST=1`, `SKIP_REFERENCE_REFRESH_IF_READY=1`, `SKIP_INTERPRO_MOTIF_DOWNLOAD=1`, and `REQUIRE_UMA_WEIGHTS=1`, so if the graph corpus and reference vocabularies already exist it proceeds to training while still verifying/downloading the required FairChem/UMA weights before oracle stages. Phase-1 training is full-corpus by default: the runner writes a per-run override with `max_steps: full_epoch` and `FULL_TRAIN_EPOCHS=1.0`, so optimizer steps are computed from the actual train split length, batch size, and gradient accumulation rather than from a fixed smoke-test cap. Training stages automatically append `config/train/overrides/wandb_online.yaml`; shell stages and commands also log W&B runner events when `WANDB_ENABLED=1`.
 
 Common controls:
 
@@ -158,7 +158,7 @@ FULL_TRAIN_EVAL_MAX_BATCHES=full scripts/run_full_phase1_phase2_training.sh
 FULL_TRAIN_NUM_WORKERS=12 FULL_TRAIN_PREFETCH_FACTOR=6 scripts/run_full_phase1_phase2_training.sh
 FULL_TRAIN_BATCH_SIZE=6 FULL_TRAIN_GRAD_ACCUM=6 ./scripts/run_full_phase1_phase2_training_250m.sh
 FULL_TRAIN_SKIP_POLICY_CHECK=1 ./scripts/run_full_phase1_phase2_training_250m.sh
-ENABLE_TROPICAL_ATTENTION=1 FULL_TRAIN_BATCH_SIZE=1 FULL_TRAIN_GRAD_ACCUM=36 ./scripts/run_full_phase1_phase2_training_250m.sh
+ENABLE_TROPICAL_ATTENTION=1 FULL_TRAIN_BATCH_SIZE=2 FULL_TRAIN_GRAD_ACCUM=18 ./scripts/run_full_phase1_phase2_training_250m.sh
 ./scripts/train_full_selected_250m_direct.sh
 FULL_TRAIN_MAX_STEPS=20 ./scripts/train_full_selected_250m_direct.sh
 ENABLE_TROPICAL_ATTENTION=1 FULL_TRAIN_MAX_STEPS=20 ./scripts/train_full_selected_250m_direct.sh
@@ -238,9 +238,9 @@ conda run -n tokengt python scripts/train_stage.py \
   --config config/train/real_full_selected_local.yaml
 ```
 
-`config/train/real_full_selected_local.yaml` sets `max_steps: full_epoch` and `full_epochs: 1.0`. For the current corpus this resolves to about 224k optimizer steps with `batch_size: 1` and `gradient_accumulation_steps: 32`, i.e. one pass over all 7,181,690 train examples. In-training validation is intentionally capped with `eval_max_batches: 512`; the stage still runs full validation and test after training through `scripts/validate_stage.py`. The full runner defaults to eight train DataLoader workers, pinned memory, persistent workers, and prefetching because the full corpus is an 83GB JSONL file and CPU graph parsing can otherwise leave the GPU underfed. Phase-1 full-corpus training backpropagates the token objective only; topology and numeric-diffusion values remain logged as diagnostics, while weighted topology/numeric auxiliary losses are reserved for later normalized ablation stages. The trainer fails fast and writes an emergency checkpoint if any loss becomes non-finite.
+`config/train/real_full_selected_local.yaml` sets `max_steps: full_epoch` and `full_epochs: 1.0`. The trainer computes optimizer steps from `ceil(train_examples / (batch_size * gradient_accumulation_steps))`, so a full epoch remains a full pass over the train split after batch-size changes. In-training validation is intentionally capped with `eval_max_batches: 512`; the stage still runs full validation and test after training through `scripts/validate_stage.py`. The full runner defaults to eight train DataLoader workers, pinned memory, persistent workers, prefetching, and cached JSONL byte offsets because the full corpus is an 88GB JSONL file and CPU graph parsing can otherwise leave the GPU underfed. Phase-1 full-corpus training backpropagates the autoregressive token objective; topology values remain logged as diagnostics, while weighted topology auxiliary losses are reserved for later normalized ablation stages. The trainer fails fast and writes an emergency checkpoint if any loss becomes non-finite.
 
-The 250M setup uses `config/model/ugm_250m_tokengt.yaml`, `config/data/real_full_selected_mix_250m.yaml`, `config/train/real_full_selected_250m_local.yaml`, `config/validate/real_full_selected_250m_validation.yaml`, `config/validate/real_full_selected_250m_test.yaml`, and `config/inference/real_full_selected_250m_inference.yaml`. Its artifacts live under `outputs/real_full_selected_250m_local/` so it can be trained beside the default 576M run. A synthetic CUDA probe at 926 graph tokens found `batch_size: 7` fits and `batch_size: 8` OOMs, but real shuffled training OOMed at batch 7, so the production 250M defaults are `batch_size: 6`, `eval_batch_size: 6`, and `gradient_accumulation_steps: 6`. After the corpus, UMA weights, and vocab have already been checked or built once, `./scripts/train_full_selected_250m_direct.sh` jumps straight to `train_stage.py` with the same 250M configs, reuses the existing vocab, and skips the full runner preamble. Its `SKIP_POLICY_CHECK=1` default should only be used after the same unchanged corpus has passed the full sequence-only policy scan.
+The 250M setup uses `config/model/ugm_250m_tokengt.yaml`, `config/data/real_full_selected_mix_250m.yaml`, `config/train/real_full_selected_250m_local.yaml`, `config/validate/real_full_selected_250m_validation.yaml`, `config/validate/real_full_selected_250m_test.yaml`, and `config/inference/real_full_selected_250m_inference.yaml`. Its artifacts live under `outputs/real_full_selected_250m_local/` so it can be trained beside the default 576M run. Standard softmax 250M training defaults to `batch_size: 6`, `eval_batch_size: 6`, and `gradient_accumulation_steps: 6`. Hybrid FlashAttention-2/SDPA plus MHTA training defaults to compact 926-token context with layer-sparse MHTA: FlashAttention/SDPA runs in every layer, and MHTA runs in the final layer unless `hybrid_tropical_layers` is overridden. The hybrid config also sets `tropical_query_chunk_size: 96`, which computes the exact MHTA Hilbert-distance operation in query blocks rather than materializing the full `[batch, heads, tokens, tokens, head_dim]` tensor at once. The direct wrapper uses `batch_size: 2`, `eval_batch_size: 2`, and `gradient_accumulation_steps: 18` for the sparse hybrid path; set `FULL_TRAIN_BATCH_SIZE=1 FULL_TRAIN_GRAD_ACCUM=36` if another process is sharing the GPU or if local activation memory is tighter. After the corpus, UMA weights, and vocab have already been checked or built once, `./scripts/train_full_selected_250m_direct.sh` jumps straight to `train_stage.py` with the same 250M configs, reuses the existing vocab, and skips the full runner preamble. Its `SKIP_POLICY_CHECK=1` default should only be used after the same unchanged corpus has passed the full sequence-only policy scan.
 
 ### Sequence-First Multimodal And FairChem/UMA Oracle Conditioning
 
@@ -254,7 +254,7 @@ UMA influences graph-state evolution through fine-grained binned records only in
 
 The stage is still aimed at actual structure-dynamics generation. The model should propose typed atom/bond/coordinate/frame graph records; the restriction is that those predictions are trained through UMA/verifier/GFlowNet feedback rather than supervised copying of structure files, energy/force labels, or MD frames. Generated-token PDB rendering is optional and not required for this pass.
 
-Mechanistically, the UMA stage treats evolving attention maps as contact fields. Attention couplings are fused with Euclidean hidden-state geometry and Jensen-Shannon distance after hidden-state softmax to form sequence-conditioned contact estimates; generated coordinate/frame records are checked for consistency with those estimates before FairChem/UMA reward and GFlowNet trajectory balance reinforce the graph-state path.
+Mechanistically, the UMA stage treats evolving attention maps as contact fields. When `emit_attention_contact_maps` is enabled for the MHTA or hybrid FlashAttention/MHTA backend, MHTA Hilbert-distance scores are converted into row-normalized contact maps and fused with Euclidean hidden-state geometry plus Jensen-Shannon hidden-state geometry. The resulting field is a sequence-conditioned contact hypothesis, not a copied structure label. With `config/train/overrides/uma_contact_geometry_loss.yaml`, rows that carry explicit UMA feedback records train both the contact map and embedding geometry: low-temperature rows prefer sharper stabilization/refinement support, while high-temperature rows prefer higher contact-map and embedding-geometry entropy, broader token-motion records such as `explore`, `diversify`, and `expand`, and more diverse GFlowNet terminal states. FairChem/UMA then scores candidate molecules by energy and force at the graph-specified Kelvin temperature; this oracle reward is what reinforces the graph-state path.
 
 The live UMA backend is FairChem from the Amelie Schreiber fork at `data/external_repos/fairchem`. Repository acquisition alone does not download gated UMA weights. To run real oracle scoring, install/resolve FairChem dependencies, request access to `facebook/UMA` on Hugging Face, authenticate with `hf auth login`, and resolve the default UMA-S-1.2 checkpoint plus OMol reference tables:
 
@@ -276,6 +276,16 @@ conda run -n tokengt python scripts/check_uma_oracle.py \
 ```
 
 `scripts/download_uma_weights.py` uses FairChem's model registry and Hugging Face cache, downloading `facebook/UMA` files when they are absent and reporting their resolved local paths. The full training runners call this preflight when `REQUIRE_UMA_WEIGHTS=1`; set `UMA_SCORE_SMOKE=1` to run a strict `CCO` ASE/FairChem scoring check before training. `UGM_UMA_BACKEND=proxy` is available only for unit tests and local smoke checks that must not download gated UMA weights. The production oracle GFlowNet configs use `oracle.backend: fairchem` with `strict: true`, so a missing FairChem clone, missing Hugging Face access, or invalid candidate causes a clear failure rather than silent proxy scoring.
+
+For the optional contact-map/geometry coupling during MHTA training, append the UMA geometry override through the runner's extra-config hook:
+
+```bash
+ENABLE_TROPICAL_ATTENTION=1 \
+EXTRA_TRAIN_CONFIGS="config/train/overrides/uma_contact_geometry_loss.yaml" \
+./scripts/train_full_selected_250m_direct.sh
+```
+
+For diagnostics without backpropagating through the contact maps, use `EXTRA_TRAIN_CONFIGS="config/model/overrides/attention_contact_maps.yaml config/train/overrides/folding_contact_diagnostics.yaml"` instead.
 
 ```bash
 conda run -n tokengt python scripts/prepare_multimodal_sources.py \
@@ -646,7 +656,7 @@ conda run -n tokengt python scripts/run_graph_state_ablation.py \
 
 Use `--dry-run` to print the exact variant commands without training. The graph-state implementation treats reasoning as an evolving graph with optional latent thought nodes and verifier/tool observations; chain-of-thought text is only a possible rendering of that state.
 
-Optional Multi-Head Tropical Attention backend smoke stage. This replaces the self-attention kernel inside the compact TokenGT encoder with a masked max-plus/Hilbert-projective MHTA backend while leaving the default model path unchanged. It logs `tropical_attention/*` metrics to JSONL and W&B when W&B is enabled.
+Optional Multi-Head Tropical Attention smoke stage. The pure backend replaces the self-attention kernel inside the compact TokenGT encoder with masked max-plus/Hilbert-projective MHTA. The training wrappers use the faster hybrid backend by default when `ENABLE_TROPICAL_ATTENTION=1`: every layer runs a FlashAttention-2 package path when the installed CUDA extension supports the mask/dtype, otherwise a PyTorch scaled-dot-product attention fallback, and only configured layers add an MHTA branch. `config/model/overrides/hybrid_flash_mhta_backend.yaml` defaults to `hybrid_tropical_layers: [-1]`, which means final-layer MHTA for any model depth, and `tropical_query_chunk_size: 96`, which preserves exact MHTA scores while lowering peak activation memory on 24GB GPUs. Use zero-based indices such as `[2, 5]` for a 6-layer model when you want a denser tropical path. The encoder logs `flash_attention/*`, `hybrid_attention/*`, and active-layer `tropical_attention/*` metrics to JSONL and W&B when W&B is enabled; `hybrid_attention/tropical_active` reports the fraction of hybrid layers that actually ran MHTA in that pass.
 
 ```bash
 conda run -n tokengt python scripts/train_stage.py \
@@ -665,13 +675,13 @@ conda run -n tokengt python scripts/train_stage.py \
   --config config/train/graph_pretrain_tiny.yaml
 ```
 
-For the full selected public corpus, use the shell switch rather than editing YAML by hand. The switch appends `config/model/overrides/tropical_attention_backend.yaml`, leaving the existing data, context, and training configs in place. On a 24GB RTX 4090, start conservatively with the 250M profile and micro-batch 1; increase only after a short run proves memory headroom.
+For the full selected public corpus, use the shell switch rather than editing YAML by hand. The switch appends `config/model/overrides/hybrid_flash_mhta_backend.yaml` by default, leaving the existing data, context, and training configs in place. On this 24GB RTX 4090, the current direct 250M sparse-hybrid default is compact context with micro-batch 2 and gradient accumulation 18. To force pure MHTA for ablation, set `TROPICAL_ATTENTION_CONFIG=config/model/overrides/tropical_attention_backend.yaml`.
 
 ```bash
 ENABLE_TROPICAL_ATTENTION=1 \
-FULL_TRAIN_BATCH_SIZE=1 \
-FULL_TRAIN_EVAL_BATCH_SIZE=1 \
-FULL_TRAIN_GRAD_ACCUM=36 \
+FULL_TRAIN_BATCH_SIZE=2 \
+FULL_TRAIN_EVAL_BATCH_SIZE=2 \
+FULL_TRAIN_GRAD_ACCUM=18 \
 ./scripts/run_full_phase1_phase2_training_250m.sh
 ```
 
@@ -679,6 +689,17 @@ To jump directly to training after the corpus, context config, UMA weights, and 
 
 ```bash
 ENABLE_TROPICAL_ATTENTION=1 ./scripts/train_full_selected_250m_direct.sh
+```
+
+Most time-efficient 250M command with both attention branches enabled:
+
+```bash
+ENABLE_TROPICAL_ATTENTION=1 \
+FULL_TRAIN_BATCH_SIZE=2 \
+FULL_TRAIN_EVAL_BATCH_SIZE=2 \
+FULL_TRAIN_GRAD_ACCUM=18 \
+SKIP_POLICY_CHECK=1 \
+./scripts/train_full_selected_250m_direct.sh
 ```
 
 Code, Lean, and chemistry vertical-slice SFT smoke stages:
@@ -709,7 +730,7 @@ conda run -n tokengt python scripts/train_stage.py \
   --config config/train/science_sft_tiny.yaml
 ```
 
-The PLAN-D/PLAN-F science config can enable the conditional numeric diffusion auxiliary head for non-structure numeric properties via `loss.numeric_diffusion_weight`. Direct coordinate, dynamics, energy, and force labels remain disabled for the first run.
+UGM uses a single autoregressive graph-token decoder for symbolic and structure-candidate records. Structure positions are not produced by a parallel coordinate head: generated frame coordinates are discretized into identity-bearing target records such as `COORD:f0:a17:x:pos_near`, so frame, atom slot, axis, and coordinate bin are all predicted through the same random-order `<POS>` objective as text, SELFIES, proof, tool, and oracle records. Direct coordinate, dynamics, energy, and force labels from structure files remain disabled for the first run.
 
 PLAN-H UGM multimodal phase-2 4090 stage:
 
@@ -760,7 +781,7 @@ config/model/ugm_250m_tokengt.yaml
 
 With `max_vocab_size: 262144`, this profile is 576,767,128 trainable parameters with `max_seq_len: 1024`, `hidden_dim: 1024`, `num_layers: 24`, `num_heads: 16`, and `ffn_dim: 4096`.
 
-The 250M UGM profile keeps `max_seq_len: 1024`, `max_nodes: 1024`, `max_slots: 256`, `numeric_dim: 16`, and `numeric_diffusion_steps: 64`, while using `hidden_dim: 768`, `num_layers: 6`, `num_heads: 12`, and `ffn_dim: 3072`. With the same 262,144-token vocabulary, it profiles at 249,783,448 trainable parameters.
+The 250M UGM profile keeps `max_seq_len: 1024`, `max_nodes: 1024`, and `max_slots: 256`, with structure-candidate coordinates represented as autoregressive graph tokens. It uses `hidden_dim: 768`, `num_layers: 6`, `num_heads: 12`, and `ffn_dim: 3072`.
 
 The ready-to-run 4090 configs are:
 
@@ -953,7 +974,7 @@ Run this after the full checkpoint has been produced.
 
 Current UGM smoke status:
 
-- Data split: 20 train, 8 validation, 4 test examples under `data/processed/multimodal_graphs/`.
+- Data split: 23 train, 5 validation, 4 test examples under `data/processed/multimodal_graphs/`.
 - Phase-2 checkpoint: `outputs/multimodal_phase2_tiny/checkpoint_final.pt`.
 - Oracle-feedback GFlowNet checkpoint: `outputs/multimodal_oracle_gflownet_tiny/gflownet_final.pt`.
 - File-based inference smoke output: `outputs/multimodal_phase2_tiny/infer_file_smoke.json`.
@@ -1000,7 +1021,7 @@ Current smoke coverage:
 - local LoRA plus checkpointing forward/backward.
 - SFM/NatureLM and UniGenX reference-token extraction plus science metrics.
 - Hebrew morphology/root graphification, UD CoNLL-U parsing, Verb Complements TSV support, root-extension graphs, and collator target-slot reservation.
-- PLAN-F advanced topology/tropical utilities, numeric diffusion targets/head, protein/docking/bioactivity graphifiers, audio feature extraction, stronger curation filters, and context/backward/subtrajectory GFlowNet.
+- PLAN-F advanced topology/tropical utilities, autoregressive coordinate/property graph tokens, protein/docking/bioactivity graphifiers, audio feature extraction, stronger curation filters, and context/backward/subtrajectory GFlowNet.
 - PLAN-H UGM multimodal vocabulary, graphification, optional input-row PDB rendering, numeric extraction, oracle-feedback reward, and collator coverage.
 - Motif vocabulary parsing for PROSITE, InterPro, CATH, Rfam, local motif rows, and structure-derived sequence motifs from atom/frame rows.
 - UGM scientific/oracle random-order policies and multimodal inference/QA wiring.
@@ -1030,7 +1051,6 @@ Current smoke coverage:
 - `src/iska_reasoner/topology/`: graph topology and distogram-style summaries.
 - `src/iska_reasoner/tropical/`: annealing, logit selection diagnostics, masked MHTA, and tropical transformer encoder utilities.
 - `src/iska_reasoner/oracles/`: live external oracle adapters, including FairChem/UMA.
-- `src/iska_reasoner/models/numeric_diffusion.py`: conditional numeric diffusion head.
 - `scripts/prepare_science_sources.py`: local PubChem/UniProt/RefSeq/Materials/ChEMBL/BindingDB/PDBbind/EC preparation.
 - `scripts/prepare_multimodal_sources.py`: local/synthetic UGM multimodal graph-record preparation.
 - `scripts/audit_dataset_capacity.py`: manifest size and local capacity audit.

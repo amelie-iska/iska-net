@@ -17,7 +17,6 @@ Metrics:
 - `token_accuracy`: accuracy on target graph-token predictions only.
 - `total_loss`: CE plus enabled auxiliary losses.
 - `topology_loss`: MSE for the lightweight topology prediction head.
-- `numeric_diffusion_loss`: PLAN-F UniGenX-style denoising loss over extracted numeric coordinate/property targets when `model.numeric_dim > 0`.
 - `perplexity`: `exp(loss)` on validation, clipped internally to avoid overflow.
 - `grad_norm`: clipped gradient norm after accumulation.
 - `lr`: current optimizer learning rate.
@@ -27,7 +26,7 @@ Metrics:
 - `tropical/logit_entropy`: entropy of target-position logits under the current tropical temperature.
 - `tropical/top1_margin`: top-1 minus top-2 logit margin.
 - `tropical/top1_confidence`: mean max softmax probability.
-- `tropical_attention/enabled`: emitted as `1.0` when the model-level MHTA backend is active.
+- `tropical_attention/enabled`: emitted as `1.0` when at least one MHTA layer ran in the current forward pass.
 - `tropical_attention/score_mean`: mean valid MHTA score, equal to negative Hilbert distance for the symmetric backend.
 - `tropical_attention/score_std`: standard deviation of valid MHTA scores.
 - `tropical_attention/distance_mean`: mean valid Hilbert projective distance.
@@ -35,7 +34,16 @@ Metrics:
 - `tropical_attention/selection_confidence`: softmax diagnostic over MHTA scores; this is only a logging proxy because MHTA aggregation itself uses max-plus selection.
 - `tropical_attention/unique_argmax_rate`: number of selected key positions divided by sequence length for valid query positions.
 - `tropical_attention/context_abs_mean`: mean absolute tropical context before Euclidean devaluation.
+- `flash_attention/enabled`: emitted as `1.0` when the Flash-eligible PyTorch SDPA branch is active.
+- `flash_attention/package_kernel`: emitted as `1.0` when the installed FlashAttention-2 package handled the softmax branch directly.
+- `flash_attention/package_kernel_failed`: emitted as `1.0` only when the FlashAttention-2 package path was attempted but had to fall back.
+- `flash_attention/sdpa_requested`: emitted as `1.0` when the model requested PyTorch scaled-dot-product attention fallback. CUDA dispatch to FlashAttention, memory-efficient, or math kernels depends on device, dtype, mask, and installed PyTorch support.
+- `hybrid_attention/enabled`: emitted as `1.0` when the hybrid Flash-eligible SDPA plus MHTA backend is active.
+- `hybrid_attention/softmax_weight`: configured residual weight on the SDPA branch.
+- `hybrid_attention/tropical_weight`: configured residual weight on the MHTA branch.
+- `hybrid_attention/tropical_active`: fraction of hybrid encoder layers that executed the MHTA branch in the current forward pass. With the default full-training override `hybrid_tropical_layers: [-1]` and a 6-layer 250M model, this should be approximately `0.1667`.
 - `topology/*`: batch mean graph topology summaries.
+- `COORD:*` target-token behavior: generated structure positions are evaluated as ordinary autoregressive graph-token predictions; no active `numeric_diffusion_loss` is logged.
 - `verifier/*`: validation-time verifier reward/pass diagnostics.
 - `code/*`, `lean/*`, `chem/*`, `science/*`, `hebrew/*`, `multimodal/*`: domain validation metrics when the batch contains those task families.
 

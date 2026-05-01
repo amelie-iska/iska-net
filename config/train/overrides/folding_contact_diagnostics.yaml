@@ -1,0 +1,6 @@
+hidden_topology:
+  enabled: true
+  folding_contact_enabled: true
+  log_every: 100
+  max_points: 64
+  bins: 8

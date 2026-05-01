@@ -159,7 +159,7 @@ Implemented in this pass:
 
 - Live UMA adapter and asynchronous oracle cache.
 - Real attention-map extraction from model internals.
-- Candidate coordinate graph decoder beyond coarse `COORD` bin records.
+- Candidate coordinate graph decoder now emits identity-bearing autoregressive `COORD:f{frame}:a{atom}:{axis}:{bin}` records for bounded frame/atom slots.
 - Generated PDB/mmCIF/SDF writers.
 - Full chemical valence repair beyond current token/verifier checks.
 - Large dataset acquisition gates for additional licensed or API-protected corpora.

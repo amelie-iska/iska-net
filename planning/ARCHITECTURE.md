@@ -46,10 +46,10 @@ Supported order sources:
 - PyTorch `TransformerEncoder`;
 - tied LM head for target graph-token prediction;
 - small value head reserved for verifier/reward extensions.
-- optional conditional numeric diffusion head for coordinate/property/assay targets;
 - optional gradient checkpointing across encoder layers;
 - optional project-local LoRA adapters for linear layers.
-- optional masked Multi-Head Tropical Attention backend, enabled by `model.attention_backend: tropical`, using log-ReLU tropicalization, headwise max-plus projections, Hilbert-projective query-key scores, and max-plus value aggregation. The default remains PyTorch softmax attention.
+- optional masked Multi-Head Tropical Attention backend, enabled by `model.attention_backend: tropical`, using log-ReLU tropicalization, headwise max-plus projections, Hilbert-projective query-key scores, and max-plus value aggregation;
+- optional hybrid FlashAttention-2/SDPA plus MHTA backend, enabled by `model.attention_backend: hybrid_flash_tropical`, which runs the installed FlashAttention-2 package path when mask and dtype allow it, otherwise PyTorch scaled-dot-product attention, in every encoder layer. MHTA is layer-sparse through `model.hybrid_tropical_layers`; the default full-training override uses `[-1]`, so only the final layer adds the max-plus/Hilbert-projective branch before merging its residual contribution. This is the default backend selected by `ENABLE_TROPICAL_ATTENTION=1` in the full-training shell wrappers.
 
 ## Training Stages
 
@@ -68,7 +68,7 @@ Supported order sources:
 
 Current topology support includes graph component count, cycle rank, edge-type entropy, H0 total persistence over graph shortest-path distances, and Laplacian algebraic connectivity. PLAN-F adds optional `ripser`/`gudhi` persistent-homology summaries when those libraries are installed, plus fallback persistent-Laplacian-style spectra over shortest-path filtrations.
 
-Tropical support has two layers. The training-level `tropical:` config controls temperature schedules, logit entropy, top-1 margin, and top-1 confidence for supervised target positions. The model-level `model.attention_backend: tropical` switch replaces each encoder self-attention block with masked MHTA. This backend is optional and logs `tropical_attention/*` metrics for Hilbert-score geometry, selection confidence, argmax diversity, and context scale. PLAN-F also adds a standalone max-plus `TropicalAttention` module, activation-cell transition signatures, and a maximum-spanning-arborescence parser for tropical dependency-selection experiments.
+Tropical support has two layers. The training-level `tropical:` config controls temperature schedules, logit entropy, top-1 margin, and top-1 confidence for supervised target positions. The model-level `model.attention_backend: tropical` switch replaces each encoder self-attention block with masked MHTA. The `model.attention_backend: hybrid_flash_tropical` switch keeps a FlashAttention-2/SDPA softmax branch in all layers and adds MHTA only where `model.hybrid_tropical_layers` or `model.hybrid_tropical_every` requests it; it logs `flash_attention/*`, `hybrid_attention/*`, and active-layer `tropical_attention/*` metrics. PLAN-F also adds a standalone max-plus `TropicalAttention` module, activation-cell transition signatures, and a maximum-spanning-arborescence parser for tropical dependency-selection experiments.
 
 ## GFlowNet Stage
 
@@ -105,7 +105,7 @@ The domain adapters are deliberately small and inspectable:
 
 These adapters are not production sandboxes or full domain platforms. They are rigorous smoke paths for the vertical slices described in PLAN-C.
 
-PLAN-F implements the previously deferred UniGenX-style numeric head. The random-order LM still predicts symbolic graph tokens, while the numeric diffusion head receives graph-level hidden state and denoises extracted numeric values such as coordinates, molecular properties, and assay values.
+UGM keeps structure-candidate generation inside the random-order autoregressive graph-token objective. Coordinates are represented by bounded, identity-bearing records such as `COORD:f0:a17:x:pos_near`, which encode frame index, atom slot, axis, and coordinate bin. This keeps positions, bonds, molecule strings, tool traces, proof records, and oracle records under one conditional graph distribution instead of routing positions through a separate diffusion head.
 
 PLAN-E keeps production Hebrew morphology out of scope. The root/template graphifier is a controlled heuristic unless UD features or local `verb_root` fields provide stronger evidence. This makes the root-extension GFlowNet stage useful for graph-of-thought mechanics without pretending the heuristic roots are gold annotations.
 
@@ -149,4 +149,4 @@ The random-order collator now reserves sequence room for target `<POS>` query sl
 
 ## 4090 Scaling
 
-The default configs are deliberately small. For 4090-scale experiments, use `config/model/small_4090_tokengt.yaml` and increase sequence length slowly. For MHTA experiments, start from `config/model/tiny_tokengt_tropical.yaml` or the override `config/train/overrides/tropical_attention_backend.yaml`; reduce batch size because explicit Hilbert-distance tensors scale as `[batch, heads, seq, seq, head_dim]`. Full 15B training and dense 256K context training are outside the scope of a single 24GB GPU; the intended path is graph memory, retrieval, and adapter training.
+The default configs are deliberately small. For 4090-scale experiments, use `config/model/small_4090_tokengt.yaml` and increase sequence length slowly. For MHTA experiments, start from `config/model/tiny_tokengt_tropical.yaml` or the override `config/model/overrides/hybrid_flash_mhta_backend.yaml`; reduce batch size when you add more tropical layers because explicit Hilbert-distance tensors scale as `[batch, heads, seq, seq, head_dim]`. Full 15B training and dense 256K context training are outside the scope of a single 24GB GPU; the intended path is graph memory, retrieval, and adapter training.

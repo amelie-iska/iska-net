@@ -127,8 +127,8 @@ The single-4090 path is still small-model/adapters-first:
 
 Latest local smoke pass:
 
-- UGM split: 20 train, 8 validation, 4 test examples.
-- Motif vocabulary: full public metadata build completed locally with 74,789 motif records and 148,669 motif tokens from core defaults, PROSITE, InterPro, CATH, and Rfam.
+- UGM split: 23 train, 5 validation, 4 test examples.
+- Motif vocabulary: full public metadata build completed locally with 74,789 motif records and 156,827 motif tokens from core defaults, PROSITE, InterPro, CATH, and Rfam.
 - Phase-2 smoke training: completed 20 steps and wrote `outputs/multimodal_phase2_tiny/checkpoint_final.pt`.
 - 4090 phase-2 config: `config/train/multimodal_phase2_4090.yaml`.
 - 4090 phase-2 validation/test configs: `config/validate/multimodal_4090_validation.yaml` and `config/validate/multimodal_4090_test.yaml`.

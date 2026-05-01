@@ -16,6 +16,7 @@ from .folding import (
     folding_attention_coordinate_consistency_loss,
     folding_contact_field,
     folding_contact_metrics,
+    uma_contact_alignment_loss,
 )
 
 __all__ = [
@@ -36,4 +37,5 @@ __all__ = [
     "folding_attention_coordinate_consistency_loss",
     "folding_contact_field",
     "folding_contact_metrics",
+    "uma_contact_alignment_loss",
 ]

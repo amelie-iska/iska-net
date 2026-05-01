@@ -21,6 +21,7 @@ gflownet:
   use_context: true
   learn_backward_policy: true
   subtrajectory_weight: 0.1
+  temperature_diversity_reward_weight: 0.05
 oracle:
   backend: fairchem
   strict: true

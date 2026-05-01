@@ -18,6 +18,61 @@ from iska_reasoner.utils.io import ensure_dir
 from iska_reasoner.utils.logging import WandbLogger, get_device, set_seed, setup_logging
 
 
+def _example_temperature_norm(example: Any) -> float | None:
+    for node in getattr(example, "nodes", []) or []:
+        if getattr(node, "type", "") != "temperature":
+            continue
+        features = getattr(node, "features", {}) or {}
+        for key in ("kelvin", "kelvin_clamped", "temperature_k"):
+            try:
+                return max(0.0, min(1.0, (float(features[key]) - 300.0) / 100.0))
+            except Exception:
+                pass
+        try:
+            return max(0.0, min(1.0, (float(str(getattr(node, "value", "")).rstrip("Kk")) - 300.0) / 100.0))
+        except Exception:
+            return None
+    metadata = getattr(example, "metadata", {}) or {}
+    try:
+        return max(0.0, min(1.0, (float(metadata.get("temperature")) - 300.0) / 100.0))
+    except Exception:
+        return None
+
+
+def _temperature_diversity_bonuses(examples: list[Any], terminal_state: torch.Tensor, weight: float) -> tuple[torch.Tensor, dict[str, float]]:
+    if weight <= 0 or terminal_state.numel() == 0:
+        return torch.zeros(terminal_state.size(0), dtype=torch.float32), {
+            "temperature_diversity_bonus_mean": 0.0,
+            "high_temperature_unique_terminal_states": 0.0,
+            "high_temperature_terminal_hamming": 0.0,
+        }
+    state = terminal_state.float().cpu()
+    temp_norms = [_example_temperature_norm(example) for example in examples]
+    bonuses = torch.zeros(state.size(0), dtype=torch.float32)
+    high_rows = [idx for idx, temp in enumerate(temp_norms) if temp is not None and temp >= 0.6]
+    high_hamming = 0.0
+    if high_rows:
+        high_state = state[high_rows]
+        unique = float(torch.unique(high_state, dim=0).size(0))
+        if high_state.size(0) > 1:
+            pairwise = torch.cdist(high_state, high_state, p=1) / max(1, high_state.size(1))
+            non_diag = ~torch.eye(high_state.size(0), dtype=torch.bool)
+            row_diversity = pairwise.masked_fill(~non_diag, 0.0).sum(dim=1) / max(1, high_state.size(0) - 1)
+            high_hamming = float(row_diversity.mean().item())
+        else:
+            row_diversity = torch.ones(1, dtype=torch.float32)
+            high_hamming = 1.0
+        for local_idx, row in enumerate(high_rows):
+            bonuses[row] = float(weight) * float(temp_norms[row] or 0.0) * row_diversity[local_idx]
+    else:
+        unique = 0.0
+    return bonuses, {
+        "temperature_diversity_bonus_mean": float(bonuses.mean().item()),
+        "high_temperature_unique_terminal_states": unique,
+        "high_temperature_terminal_hamming": high_hamming,
+    }
+
+
 def _candidate_vocab(dataset: GraphJsonlDataset, max_actions: int) -> tuple[list[str], torch.Tensor]:
     counts: dict[str, int] = {}
     for ex in tqdm((dataset[i] for i in range(len(dataset))), total=len(dataset), desc="gflownet/candidate_vocab"):
@@ -106,6 +161,7 @@ def train_gflownet_stage(cfg: dict[str, Any]) -> None:
     total_steps = int(cfg["train"].get("max_steps", 100))
     max_traj_steps = int(cfg["gflownet"].get("max_traj_steps", 8))
     epsilon = float(cfg["gflownet"].get("epsilon", 0.05))
+    temperature_diversity_reward_weight = float(cfg["gflownet"].get("temperature_diversity_reward_weight", 0.0))
     log_every = int(cfg["train"].get("log_every", 10))
 
     step = 0
@@ -132,7 +188,15 @@ def train_gflownet_stage(cfg: dict[str, Any]) -> None:
                 exact.append(1.0 if result.exact_token_match else 0.0)
                 recalls.append(result.token_recall)
                 domain_avg.update(domain_metric_dict(example, predicted_tokens))
-            traj.rewards = torch.tensor(rewards, dtype=torch.float32, device=device)
+            diversity_bonuses, diversity_metrics = _temperature_diversity_bonuses(
+                batch["examples"],
+                terminal_cpu,
+                temperature_diversity_reward_weight,
+            )
+            traj.rewards = (
+                torch.tensor(rewards, dtype=torch.float32, device=device)
+                + diversity_bonuses.to(device)
+            ).clamp_min(1e-4)
             tb = tb_loss(traj)
             sub_tb = subtb_loss(traj) if subtrajectory_weight > 0 else torch.tensor(0.0, device=device)
             loss = tb + subtrajectory_weight * sub_tb
@@ -164,6 +228,7 @@ def train_gflownet_stage(cfg: dict[str, Any]) -> None:
                     "gflownet/backward_policy_learned": 1.0 if backward_policy is not None else 0.0,
                     "gflownet/grad_norm": float(grad_norm),
                 }
+                metrics.update({f"gflownet/{key}": value for key, value in diversity_metrics.items()})
                 metrics.update({f"gflownet/{key}": value for key, value in domain_avg.compute().items()})
                 wandb.log(metrics, step)
                 with metrics_file.open("a", encoding="utf-8") as f:

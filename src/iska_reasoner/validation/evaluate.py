@@ -40,12 +40,10 @@ def evaluate_model(
             "attention_mask",
             "causal_mask",
             "labels",
-        ]}, topology_targets=tensor_batch.get("topology_features"), numeric_targets=tensor_batch.get("numeric_targets"), numeric_mask=tensor_batch.get("numeric_mask"))
+        ]}, topology_targets=tensor_batch.get("topology_features"))
         metrics = {"loss": out["loss"].item(), "token_accuracy": out["token_accuracy"].item()}
         if "topology_loss" in out:
             metrics["topology_loss"] = out["topology_loss"].item()
-        if "numeric_diffusion_loss" in out:
-            metrics["numeric_diffusion_loss"] = out["numeric_diffusion_loss"].item()
         for key, value in out.get("attention_metrics", {}).items():
             metrics[key] = value.item() if torch.is_tensor(value) else value
         metrics.update(logit_diagnostics(out["logits"], tensor_batch["labels"]))
@@ -63,11 +61,15 @@ def evaluate_model(
                 )
             )
         if hidden_topology_cfg and hidden_topology_cfg.get("folding_contact_enabled", False):
+            attention_contact_maps = out.get("attention_contact_maps")
+            include_hidden = bool(hidden_topology_cfg.get("folding_contact_include_hidden", False))
             contact = folding_contact_field(
-                hidden_states=out["hidden_states"],
+                attention_maps=attention_contact_maps,
+                hidden_states=out["hidden_states"] if (attention_contact_maps is None or include_hidden) else None,
                 token_mask=tensor_batch["attention_mask"],
             )
             metrics.update(folding_contact_metrics(contact, tensor_batch["attention_mask"]))
+            metrics["folding_contact/attention_map_enabled"] = 1.0 if attention_contact_maps is not None else 0.0
         pred = out["logits"].argmax(dim=-1)
         verifier_avg = MetricAverager()
         domain_avg = MetricAverager()

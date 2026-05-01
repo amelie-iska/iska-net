@@ -1,6 +1,8 @@
 from .diagnostics import TropicalSchedule, logit_diagnostics
 from .attention import (
+    FlashSDPAAttention,
     HeadwiseTropicalLinear,
+    HybridFlashTropicalTransformerEncoderLayer,
     MultiHeadTropicalAttention,
     TropicalAttention,
     TropicalCellSignature,
@@ -11,10 +13,12 @@ from .attention import (
 )
 
 __all__ = [
+    "FlashSDPAAttention",
     "TropicalAttention",
     "TropicalCellSignature",
     "TropicalSchedule",
     "HeadwiseTropicalLinear",
+    "HybridFlashTropicalTransformerEncoderLayer",
     "MultiHeadTropicalAttention",
     "TropicalTransformerEncoder",
     "TropicalTransformerEncoderLayer",

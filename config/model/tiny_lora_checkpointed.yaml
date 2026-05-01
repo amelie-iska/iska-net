@@ -12,8 +12,6 @@ model:
   identifier_dim: 192
   max_identifiers: 384
   topology_dim: 7
-  numeric_dim: 16
-  numeric_diffusion_steps: 16
   gradient_checkpointing: true
   lora_rank: 4
   lora_alpha: 16.0

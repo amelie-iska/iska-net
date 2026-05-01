@@ -153,7 +153,7 @@ The curation step validates schema, removes exact graph duplicates, computes a g
 
 The authoritative NatureLM integration for this project is the SFM repository at `https://github.com/amelie-iska/SFM`, which contains `NatureLM/README.md`, checkpoint links, and domain-tagged examples for the sequence-based science model described in arXiv `2502.07527`. The full NatureLM training corpus is not exposed as one public dataset, so this repo uses SFM/NatureLM as a reference source for science-domain tags, checkpoint provenance, and local reconstruction schemas.
 
-UniGenX is the model described by arXiv `2503.06687v2`: heterogeneous molecule/material/protein/docking data are sequentialized with domain special tokens, symbolic tokens, numeric fields, and a numeric diffusion head. The authoritative implementation source for this project is `https://github.com/amelie-iska/UniGenX`; this repo extracts its dictionary and tokenizer tokens into the TokenGT vocabulary and implements the local graph-token plus numeric-target training path.
+UniGenX is the model described by arXiv `2503.06687v2`: heterogeneous molecule/material/protein/docking data are sequentialized with domain special tokens, symbolic tokens, numeric fields, and a numeric generation objective. The authoritative implementation source for this project is `https://github.com/amelie-iska/UniGenX`; this repo extracts its dictionary and tokenizer tokens into the TokenGT vocabulary, while active UGM training uses graph-token autoregression for coordinate/property records rather than a separate numeric diffusion loss.
 
 Clone reference repos and extract extra vocabulary:
 

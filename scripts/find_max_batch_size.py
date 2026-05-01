@@ -50,7 +50,6 @@ def _run_single(cfg: dict[str, Any], batch_size: int, seq_len: int, vocab_size: 
     max_slots = int(model_cfg.get("max_slots", 256))
     max_identifiers = int(model_cfg.get("max_identifiers", 2 * max_nodes))
     num_kinds = int(model_cfg.get("num_kinds", 8))
-    numeric_dim = int(model_cfg.get("numeric_dim", 0))
     topology_dim = int(model_cfg.get("topology_dim", 7))
 
     input_ids = torch.randint(4, vocab_size, (batch_size, seq_len), device="cuda")
@@ -65,8 +64,6 @@ def _run_single(cfg: dict[str, Any], batch_size: int, seq_len: int, vocab_size: 
     supervised = min(16, seq_len)
     labels[:, -supervised:] = torch.randint(4, vocab_size, (batch_size, supervised), device="cuda")
     topology_targets = torch.randn(batch_size, topology_dim, device="cuda")
-    numeric_targets = torch.randn(batch_size, numeric_dim, device="cuda") if numeric_dim > 0 else None
-    numeric_mask = torch.ones(batch_size, numeric_dim, device="cuda") if numeric_dim > 0 else None
 
     start = time.perf_counter()
     optimizer.zero_grad(set_to_none=True)
@@ -82,14 +79,10 @@ def _run_single(cfg: dict[str, Any], batch_size: int, seq_len: int, vocab_size: 
             causal_mask=causal_mask,
             labels=labels,
             topology_targets=topology_targets,
-            numeric_targets=numeric_targets,
-            numeric_mask=numeric_mask,
         )
         loss = out["loss"]
         if "topology_loss" in out:
             loss = loss + float(cfg.get("loss", {}).get("topology_weight", 0.0)) * out["topology_loss"]
-        if "numeric_diffusion_loss" in out:
-            loss = loss + float(cfg.get("loss", {}).get("numeric_diffusion_weight", 0.0)) * out["numeric_diffusion_loss"]
     scaler.scale(loss).backward()
     if optimizer_step:
         scaler.step(optimizer)

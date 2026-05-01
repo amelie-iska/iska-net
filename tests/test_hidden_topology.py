@@ -7,6 +7,7 @@ from iska_reasoner.topology import (
     hidden_js_geometry_loss,
     hidden_state_topology_metrics,
     hidden_topology_collapse_loss,
+    uma_contact_alignment_loss,
 )
 
 
@@ -73,3 +74,25 @@ def test_folding_contact_field_fuses_attention_embedding_and_js_geometry():
     folded_loss = folding_attention_coordinate_consistency_loss(contact, folded_coords, mask, contact_radius=3.0)
     scrambled_loss = folding_attention_coordinate_consistency_loss(contact, scrambled_coords, mask, contact_radius=3.0)
     assert folded_loss < scrambled_loss
+
+
+def test_uma_contact_alignment_loss_uses_oracle_feedback_records():
+    class Example:
+        target_tokens = [
+            "ATTN_BIN:sequence_to_motion:b48",
+            "TOKEN_COUPLING:uma:sequence_oracle:b48",
+            "UMA_INFLUENCE:uma:trajectory_physics:b48",
+            "SEQ_STRUCT_DYN_PROXY:uma_scored",
+        ]
+
+    contact = torch.full((1, 4, 4), 0.2, requires_grad=True)
+    contact = contact - torch.diag_embed(torch.diagonal(contact, dim1=-2, dim2=-1))
+    hidden = torch.randn(1, 4, 8, requires_grad=True)
+    mask = torch.ones(1, 4, dtype=torch.bool)
+
+    loss, metrics = uma_contact_alignment_loss(contact, hidden, [Example()], mask)
+    assert loss.item() > 0.0
+    assert metrics["uma_contact/alignment_examples"] == 1.0
+    assert metrics["uma_contact/target_strength"] > 0.5
+    loss.backward()
+    assert hidden.grad is not None

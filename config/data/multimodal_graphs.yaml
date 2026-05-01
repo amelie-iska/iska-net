@@ -6,7 +6,7 @@ data:
   min_freq: 1
   max_source_tokens: 256
   max_target_tokens: 96
-  max_numeric_targets: 16
+  max_numeric_targets: 0
   enforce_sequence_only_molecules: true
   forbid_actual_structure_files: true
   allow_geometric_features: false

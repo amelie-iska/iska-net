@@ -22,7 +22,7 @@ For the full phase 1 plus phase 2 curriculum with the correct budget defaults, W
 scripts/run_full_phase1_phase2_training.sh
 ```
 
-Logs are written under `logs/full_training_sequence/<RUN_ID>/`, with `logs/full_training_sequence/latest` pointing at the newest run. The script uses the full selected public graph corpus, honors manifest-local row caps, enforces the 5B graph-token guard, and writes a 2x context config at `config/generated/real_full_selected_context_2x.yaml`. The phase wrapper now defaults to `TRAINING_FIRST=1`, `SKIP_REFERENCE_REFRESH_IF_READY=1`, `SKIP_INTERPRO_MOTIF_DOWNLOAD=1`, and `WANDB_ENABLED=1`, so an already-prepared workspace proceeds to training quickly and reports both shell-stage progress and training metrics to W&B. Useful controls:
+Logs are written under `logs/full_training_sequence/<RUN_ID>/`, with `logs/full_training_sequence/latest` pointing at the newest run. The script uses the full selected public graph corpus, honors manifest-local row caps, and enforces the 5B graph-token guard. Standard softmax training writes or uses the 2x context config at `config/generated/real_full_selected_context_2x.yaml`; `ENABLE_TROPICAL_ATTENTION=1` writes or uses the compact exact-coverage context config at `config/generated/real_full_selected_context_compact.yaml` to avoid wasting quadratic MHTA memory on unused context. The phase wrapper now defaults to `TRAINING_FIRST=1`, `SKIP_REFERENCE_REFRESH_IF_READY=1`, `SKIP_INTERPRO_MOTIF_DOWNLOAD=1`, and `WANDB_ENABLED=1`, so an already-prepared workspace proceeds to training quickly and reports both shell-stage progress and training metrics to W&B. Useful controls:
 
 ```bash
 DRY_RUN=1 scripts/run_full_training_sequence.sh
@@ -33,9 +33,11 @@ MAX_GRAPH_TOKENS=4500000000 scripts/run_full_phase1_phase2_training.sh
 WANDB_MODE=offline scripts/run_full_phase1_phase2_training.sh
 WANDB_ENABLED=0 scripts/run_full_phase1_phase2_training.sh
 TRAINING_FIRST=0 SKIP_INTERPRO_MOTIF_DOWNLOAD=0 scripts/run_full_phase1_phase2_training.sh
-ENABLE_TROPICAL_ATTENTION=1 FULL_TRAIN_BATCH_SIZE=1 FULL_TRAIN_GRAD_ACCUM=36 scripts/run_full_phase1_phase2_training_250m.sh
+ENABLE_TROPICAL_ATTENTION=1 FULL_TRAIN_BATCH_SIZE=2 FULL_TRAIN_GRAD_ACCUM=18 scripts/run_full_phase1_phase2_training_250m.sh
 ENABLE_TROPICAL_ATTENTION=1 scripts/train_full_selected_250m_direct.sh
 ```
+
+`ENABLE_TROPICAL_ATTENTION=1` defaults to the hybrid Flash-eligible SDPA plus layer-sparse MHTA backend in `config/model/overrides/hybrid_flash_mhta_backend.yaml`. That override runs FlashAttention/SDPA in every layer and MHTA only on `hybrid_tropical_layers: [-1]` by default. Use `TROPICAL_ATTENTION_CONFIG=config/model/overrides/tropical_attention_backend.yaml` only when running a pure-MHTA ablation. The direct 250M wrapper skips the slow readiness, integrity, policy, and vocabulary pregame when `OUTPUT_DIR/vocab.jsonl` already exists.
 
 ## 0. Readiness
 

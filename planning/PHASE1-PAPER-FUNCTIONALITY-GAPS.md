@@ -126,7 +126,7 @@ The paper warns about topological pareidolia and calls for causal tests: edge de
 
 **Status:** Implemented as an experimental backend; broader backend variants remain future work.
 
-The repository now has a model config switch for `model.attention_backend: tropical`, a masked MHTA transformer encoder path, tiny configs, train/validation logging, and unit tests. The paper describes a broader family of low-temperature attention, max-plus selection, tropical attention, and tropical training schedules as model-level experiments; only the MHTA path is implemented as a selectable backend.
+The repository now has model config switches for pure MHTA (`model.attention_backend: tropical`) and hybrid Flash-eligible SDPA plus layer-sparse MHTA (`model.attention_backend: hybrid_flash_tropical`), tiny configs, train/validation logging, and unit tests. The paper describes a broader family of low-temperature attention, max-plus selection, tropical attention, and tropical training schedules as model-level experiments; the current implemented model-level path covers masked MHTA and the hybrid SDPA+MHTA encoder branch, with `hybrid_tropical_layers` or `hybrid_tropical_every` controlling how many layers pay the explicit max-plus attention cost.
 
 **Implemented updates:**
 

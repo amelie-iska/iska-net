@@ -65,6 +65,8 @@ def main() -> None:
         path_status("config/train/graph_pretrain_tropical_attention_tiny.yaml"),
         path_status("config/train/overrides/tropical_attention_backend.yaml"),
         path_status("config/model/overrides/tropical_attention_backend.yaml"),
+        path_status("config/model/overrides/hybrid_flash_mhta_backend.yaml"),
+        path_status("config/generated/real_full_selected_context_compact.yaml"),
         path_status("scripts/check_dataset_integrity.py"),
         path_status("scripts/validate_dataset_catalog.py"),
         path_status("scripts/download_uma_weights.py"),

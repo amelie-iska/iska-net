@@ -32,7 +32,7 @@ def test_advanced_topology_and_tropical_modules():
     assert tree
 
 
-def test_sequence_only_unigenx_sanitizes_structure_numeric_targets_and_model_forward():
+def test_sequence_only_unigenx_sanitizes_structure_fields_and_uses_ar_model_forward():
     ex = graphify_unigenx(
         {"smiles": "C", "atomic_symbols": ["C"], "pos": [[0.1, 0.2, 0.3]], "gap": 1.5},
         0,
@@ -43,9 +43,9 @@ def test_sequence_only_unigenx_sanitizes_structure_numeric_targets_and_model_for
     assert not any(node.type in {"atom", "atom_symbol", "coordinate", "energy", "force"} for node in ex.nodes)
     assert any(node.type in {"smiles", "selfies"} for node in ex.nodes)
     vocab = build_vocab([ex])
-    collator = RandomOrderCollator(vocab, max_numeric_targets=8)
+    collator = RandomOrderCollator(vocab, max_numeric_targets=0)
     batch = collator([ex])
-    model = RandomOrderTokenGT(RandomOrderTokenGTConfig(vocab_size=len(vocab.token_to_id), hidden_dim=32, num_layers=1, num_heads=4, ffn_dim=64, numeric_dim=8, numeric_diffusion_steps=4))
+    model = RandomOrderTokenGT(RandomOrderTokenGTConfig(vocab_size=len(vocab.token_to_id), hidden_dim=32, num_layers=1, num_heads=4, ffn_dim=64))
     out = model(
         input_ids=batch["input_ids"],
         kind_ids=batch["kind_ids"],
@@ -54,10 +54,9 @@ def test_sequence_only_unigenx_sanitizes_structure_numeric_targets_and_model_for
         attention_mask=batch["attention_mask"],
         causal_mask=batch["causal_mask"],
         labels=batch["labels"],
-        numeric_targets=batch["numeric_targets"],
-        numeric_mask=batch["numeric_mask"],
     )
-    assert out["numeric_diffusion_loss"].isfinite()
+    assert out["loss"].isfinite()
+    assert "numeric_diffusion_loss" not in out
 
 
 def test_science_graphifiers_cover_protein_docking_and_bioactivity():

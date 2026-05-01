@@ -31,10 +31,10 @@ PLAN-F closes the previously deferred implementation surface from PLAN-B through
 - Add MinHash/near-dedup, contamination scanning, and license-policy filtering to curation.
 - Keep true microVM sandboxing documented as an external deployment boundary; local code gets OS resource limits and isolated tempdirs.
 
-### 2.4 Numeric Diffusion and UniGenX-Style Science
+### 2.4 Autoregressive Numeric Records and UniGenX-Style Science
 
-- Add a conditional numeric diffusion head for numeric coordinate/property prediction.
-- Add numeric-target extraction to graph batches.
+- Keep numeric coordinate/property supervision inside the random-order graph-token stream rather than a separate diffusion head.
+- Encode generated structure positions as identity-bearing coordinate tokens, for example `COORD:f0:a17:x:pos_near`.
 - Extend graphification for proteins, EC-number tasks, protein-ligand docking, and local SFM science-source reconstruction.
 - Keep large UniGenX checkpoint download explicit through model acquisition flags.
 
@@ -82,10 +82,10 @@ Implemented on 2026-04-29:
   - `TropicalAttention`;
   - hidden activation cell signatures;
   - maximum-spanning-arborescence parser.
-- Added UniGenX-style numeric diffusion:
-  - `ConditionalNumericDiffusionHead`;
-  - numeric target extraction in the random-order collator;
-  - training/validation logging for `numeric_diffusion_loss`.
+- Replaced the old UniGenX-style numeric diffusion experiment with autoregressive graph-token numeric records:
+  - generated coordinate targets use frame/atom/axis/bin tokens;
+  - active training and validation no longer log `numeric_diffusion_loss`;
+  - source numeric features such as temperature remain available as conditioning features.
 - Added PLAN-F science graphification:
   - protein/EC rows;
   - protein-ligand docking rows;
@@ -113,9 +113,9 @@ Commands run:
 - `conda run -n tokengt pytest -q`
   - result: `29 passed, 3 warnings`.
 - `conda run -n tokengt python scripts/train_stage.py --config config/model/tiny_lora_checkpointed.yaml --config config/data/science_mix.yaml --config config/train/science_sft_tiny.yaml`
-  - result: completed 20 science SFT steps with numeric diffusion enabled.
+  - result: completed 20 science SFT steps.
 - `conda run -n tokengt python scripts/validate_stage.py --config config/validate/science_validation.yaml --device cpu`
-  - result: passed and reported `validation/numeric_diffusion_loss`, `validation/science/*`, and chemistry triage metrics.
+  - result: passed and reported `validation/science/*` and chemistry triage metrics.
 - `conda run -n tokengt python scripts/train_stage.py --config config/data/synthetic_graphs.yaml --config config/train/gflownet_got_tiny.yaml`
   - result: completed 20 context/backward/subtrajectory GFlowNet steps.
 - `conda run -n tokengt python scripts/validate_gflownet.py --config config/train/gflownet_got_tiny.yaml --config config/validate/gflownet_validation.yaml --device cpu`

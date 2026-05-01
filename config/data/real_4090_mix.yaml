@@ -7,7 +7,7 @@ data:
   max_vocab_size: 120000
   max_source_tokens: 256
   max_target_tokens: 96
-  max_numeric_targets: 16
+  max_numeric_targets: 0
   extra_vocab_paths:
     - data/processed/reference_tokens/naturelm_unigenx_tokens.txt
     - data/processed/reference_tokens/multimodal_graph_tokens.txt

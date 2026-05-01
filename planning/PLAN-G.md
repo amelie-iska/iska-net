@@ -22,7 +22,7 @@ Primary papers and source links:
 - NatureLM: `Nature Language Model: Deciphering the Language of Nature for Scientific Discovery`, arXiv:2502.07527.
   - Key implementation facts: scientific entities are represented as sequences; domains include small molecules, materials, proteins, DNA, and RNA; examples use explicit domain tags such as `<protein>`, `<material>`, `<dna>`, `<rna>`, `<antibody>`, and material space-group markers.
 - UniGenX: `UniGenX: a unified generative foundation model that couples sequence, structure and function to accelerate scientific design across proteins, molecules and materials`, arXiv:2503.06687.
-  - Key implementation facts: heterogeneous symbolic/numeric data is represented as a mixed stream; a decoder-only autoregressive transformer supplies global context; a conditional diffusion head generates numeric fields; domains include materials, molecules, proteins, and protein-ligand docking.
+  - Key implementation facts: heterogeneous symbolic/numeric data is represented as a mixed stream; a decoder-only autoregressive transformer supplies global context; UGM emits bounded numeric records as graph tokens; domains include materials, molecules, proteins, and protein-ligand docking.
 
 Local repo inspection:
 
@@ -72,7 +72,7 @@ Local repo inspection:
 - `conda run -n tokengt pytest -q`: `29 passed`, with only PyTorch nested-tensor warnings.
 - `conda run -n tokengt python scripts/train_stage.py --config config/model/tiny_lora_checkpointed.yaml --config config/data/science_mix.yaml --config config/train/science_sft_tiny.yaml`: completed 20 science SFT steps after the source cleanup and rebuilt `outputs/science_sft_tiny/vocab.jsonl` with `1316` tokens.
 - Verified the rebuilt science vocab contains `<protein>`, `<material>`, `<coord>`, and `UNIGENX:TOK:<molecule>`.
-- `conda run -n tokengt python scripts/validate_stage.py --config config/validate/science_validation.yaml --device cpu`: completed and reported science, topology, tropical, verifier, and numeric-diffusion metrics.
+- `conda run -n tokengt python scripts/validate_stage.py --config config/validate/science_validation.yaml --device cpu`: completed and reported science, topology, tropical, and verifier metrics.
 - Added `planning/LICENSE-REVIEW.md` and `planning/RUNBOOK-4090.md`.
 - Added W&B online/offline overlays and 4090 train configs.
 - Installed/verified optional runtime tools in the `tokengt` env: `datasets`, `transformers`, `rdkit`, `soundfile`, `torchaudio`, `ripser`, `gudhi`, and Lean 4 via `elan`.

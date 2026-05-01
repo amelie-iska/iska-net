@@ -57,7 +57,7 @@ This plan translates the dataset-expanded paper additions into codebase work. It
 - [x] Keep tqdm progress for dataset indexing, downloading, graphification, and training.
 - [x] Add per-source acquisition provenance records.
 - [x] Add structured acquisition logs and optional W&B summary metrics.
-- [x] Existing training loop logs losses, token accuracy, topology diagnostics, numeric diffusion losses, tropical diagnostics, gradient norm, and learning rate to W&B when enabled.
+- [x] Existing training loop logs losses, token accuracy, topology diagnostics, tropical diagnostics, gradient norm, and learning rate to W&B when enabled.
 - [x] Add dataset-preparation metrics to W&B for each source: downloaded bytes, rows prepared, split counts, and skipped/auth-gated status.
 - [ ] Add split-leakage metrics to W&B once entity-aware split registry is implemented.
 

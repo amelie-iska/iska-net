@@ -76,7 +76,7 @@ Generated from `scripts/validate_dataset_catalog.py`.
 | `curated_graphs` | `true` | 54 | test=6, train=46, val=2 | `n/a` |
 | `hebrew_mix` | `true` | 112 | test=0, train=98, val=14 | `n/a` |
 | `science_mix` | `true` | 8 | test=0, train=7, val=1 | `n/a` |
-| `multimodal_graphs` | `true` | 32 | test=4, train=20, val=8 | `n/a` |
+| `multimodal_graphs` | `true` | 32 | test=4, train=23, val=5 | `n/a` |
 | `real_4090_mix` | `true` | 230,857 | test=2,271, train=226,293, val=2,293 | `n/a` |
 | `real_full_selected_mix` | `true` | 7,328,008 | test=73,274, train=7,181,690, val=73,044 | `true` |
 

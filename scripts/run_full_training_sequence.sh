@@ -52,7 +52,21 @@ FULL_TRAIN_NUM_WORKERS="${FULL_TRAIN_NUM_WORKERS:-8}"
 FULL_TRAIN_EVAL_NUM_WORKERS="${FULL_TRAIN_EVAL_NUM_WORKERS:-2}"
 FULL_TRAIN_PREFETCH_FACTOR="${FULL_TRAIN_PREFETCH_FACTOR:-4}"
 ENABLE_TROPICAL_ATTENTION="${ENABLE_TROPICAL_ATTENTION:-0}"
-TROPICAL_ATTENTION_CONFIG="${TROPICAL_ATTENTION_CONFIG:-config/model/overrides/tropical_attention_backend.yaml}"
+TROPICAL_ATTENTION_CONFIG="${TROPICAL_ATTENTION_CONFIG:-config/model/overrides/hybrid_flash_mhta_backend.yaml}"
+EXTRA_TRAIN_CONFIGS="${EXTRA_TRAIN_CONFIGS:-}"
+FULL_SELECTED_CONTEXT_CONFIG="${FULL_SELECTED_CONTEXT_CONFIG:-}"
+if [[ -z "$FULL_SELECTED_CONTEXT_CONFIG" ]]; then
+  if [[ "$ENABLE_TROPICAL_ATTENTION" == "1" ]]; then
+    FULL_SELECTED_CONTEXT_CONFIG="config/generated/real_full_selected_context_compact.yaml"
+  else
+    FULL_SELECTED_CONTEXT_CONFIG="config/generated/real_full_selected_context_2x.yaml"
+  fi
+fi
+if [[ "$FULL_SELECTED_CONTEXT_CONFIG" == *compact* ]]; then
+  FULL_SELECTED_CONTEXT_MULTIPLIER="${FULL_SELECTED_CONTEXT_MULTIPLIER:-1.0}"
+else
+  FULL_SELECTED_CONTEXT_MULTIPLIER="${FULL_SELECTED_CONTEXT_MULTIPLIER:-2.0}"
+fi
 WANDB_ENABLED="${WANDB_ENABLED:-1}"
 WANDB_MODE="${WANDB_MODE:-online}"
 WANDB_PROJECT="${WANDB_PROJECT:-iska-ugm}"
@@ -80,7 +94,8 @@ export SKIP_REFERENCE_REFRESH_IF_READY TRAINING_FIRST WANDB_ENABLED WANDB_MODE W
 export FULL_TRAIN_EPOCHS FULL_TRAIN_BATCH_SIZE FULL_TRAIN_EVAL_BATCH_SIZE FULL_TRAIN_GRAD_ACCUM FULL_TRAIN_SKIP_POLICY_CHECK
 export FULL_TRAIN_EVAL_EVERY FULL_TRAIN_EVAL_MAX_BATCHES FULL_TRAIN_CHECKPOINT_EVERY
 export FULL_TRAIN_NUM_WORKERS FULL_TRAIN_EVAL_NUM_WORKERS FULL_TRAIN_PREFETCH_FACTOR
-export ENABLE_TROPICAL_ATTENTION TROPICAL_ATTENTION_CONFIG
+export ENABLE_TROPICAL_ATTENTION TROPICAL_ATTENTION_CONFIG FULL_SELECTED_CONTEXT_CONFIG FULL_SELECTED_CONTEXT_MULTIPLIER
+export EXTRA_TRAIN_CONFIGS
 export REQUIRE_UMA_WEIGHTS UMA_MODEL_NAME UMA_TASK_NAME UMA_DEVICE UMA_SCORE_SMOKE
 
 if [[ "$ENABLE_TROPICAL_ATTENTION" == "1" ]]; then
@@ -90,9 +105,17 @@ if [[ "$ENABLE_TROPICAL_ATTENTION" == "1" ]]; then
   fi
   case ",$WANDB_TAGS," in
     *,tropical-attention,*) ;;
-    *) WANDB_TAGS="$WANDB_TAGS,tropical-attention,mhta" ;;
+    *) WANDB_TAGS="$WANDB_TAGS,tropical-attention,layer-sparse-mhta,mhta" ;;
   esac
   export WANDB_TAGS
+fi
+if [[ -n "$EXTRA_TRAIN_CONFIGS" ]]; then
+  for path in $EXTRA_TRAIN_CONFIGS; do
+    if [[ ! -f "$path" ]]; then
+      printf 'Extra training config not found: %s\n' "$path" >&2
+      exit 1
+    fi
+  done
 fi
 
 timestamp() {
@@ -180,7 +203,9 @@ Environment overrides:
   FULL_TRAIN_EVAL_NUM_WORKERS=2
   FULL_TRAIN_PREFETCH_FACTOR=4
   ENABLE_TROPICAL_ATTENTION=0
-  TROPICAL_ATTENTION_CONFIG=config/model/overrides/tropical_attention_backend.yaml
+  TROPICAL_ATTENTION_CONFIG=config/model/overrides/hybrid_flash_mhta_backend.yaml
+  FULL_SELECTED_CONTEXT_CONFIG=   # default: compact exact context when Tropical Attention is enabled, otherwise 2x context
+  FULL_SELECTED_CONTEXT_MULTIPLIER=  # default: 1.0 for compact context, otherwise 2.0
   REQUIRE_UMA_WEIGHTS=1
   UMA_MODEL_NAME=uma-s-1p2
   UMA_TASK_NAME=omol
@@ -306,6 +331,11 @@ run_train_stage() {
   if [[ "${ENABLE_TROPICAL_ATTENTION:-0}" == "1" ]]; then
     args+=(--config "$TROPICAL_ATTENTION_CONFIG")
   fi
+  if [[ -n "${EXTRA_TRAIN_CONFIGS:-}" ]]; then
+    for path in $EXTRA_TRAIN_CONFIGS; do
+      args+=(--config "$path")
+    done
+  fi
   if [[ "${WANDB_ENABLED:-0}" == "1" ]]; then
     args+=(--config config/train/overrides/wandb_online.yaml)
   fi
@@ -374,6 +404,7 @@ cat > "$SUMMARY_MD" <<EOF
 - Validation device: \`$VALIDATION_DEVICE\`
 - Model config: \`$MODEL_CONFIG\`
 - Full selected configs: \`$FULL_SELECTED_DATA_CONFIG / $FULL_SELECTED_TRAIN_CONFIG\`
+- Full selected context config: \`$FULL_SELECTED_CONTEXT_CONFIG\` with multiplier \`$FULL_SELECTED_CONTEXT_MULTIPLIER\`
 - Full graph output: \`data/processed/real_full_selected_mix\`
 - Max selected graph-token budget: \`$MAX_GRAPH_TOKENS\`
 - Master log: \`$MASTER_LOG\`
@@ -392,6 +423,7 @@ log "Run directory: $RUN_DIR"
 log "Full selected-corpus mode: manifest per-dataset caps are honored; total graph-token guard is MAX_GRAPH_TOKENS=$MAX_GRAPH_TOKENS."
 log "Model config: $MODEL_CONFIG"
 log "Full selected configs: data=$FULL_SELECTED_DATA_CONFIG train=$FULL_SELECTED_TRAIN_CONFIG val=$FULL_SELECTED_VALIDATION_CONFIG test=$FULL_SELECTED_TEST_CONFIG infer=$FULL_SELECTED_INFERENCE_CONFIG"
+log "Full selected context: config=$FULL_SELECTED_CONTEXT_CONFIG multiplier=$FULL_SELECTED_CONTEXT_MULTIPLIER"
 log "TQDM_DYNAMIC_NCOLS=$TQDM_DYNAMIC_NCOLS TQDM_MININTERVAL=$TQDM_MININTERVAL PYTHONUNBUFFERED=$PYTHONUNBUFFERED"
 log "W&B: enabled=$WANDB_ENABLED project=$WANDB_PROJECT group=$WANDB_GROUP mode=$WANDB_MODE command_events=$WANDB_LOG_COMMANDS"
 log "TRAINING_FIRST=$TRAINING_FIRST SKIP_REFERENCE_REFRESH_IF_READY=$SKIP_REFERENCE_REFRESH_IF_READY"
@@ -452,18 +484,18 @@ if [[ "$TRAINING_FIRST" == "1" \
   && -s data/processed/real_full_selected_mix/token_counts.json \
   && -s data/processed/real_full_selected_mix/integrity.json ]]; then
   printf 'Existing full selected graph corpus found; skipping download/graphify because TRAINING_FIRST=1.\n'
-  if [[ ! -s config/generated/real_full_selected_context_2x.yaml ]]; then
+  if [[ ! -s "$FULL_SELECTED_CONTEXT_CONFIG" ]]; then
     if [[ -s data/processed/real_full_selected_mix/context_requirements.json ]]; then
       run_cx python scripts/write_context_config_from_summary.py \
         --summary data/processed/real_full_selected_mix/context_requirements.json \
-        --output config/generated/real_full_selected_context_2x.yaml \
-        --context-multiplier 2.0
+        --output "$FULL_SELECTED_CONTEXT_CONFIG" \
+        --context-multiplier "$FULL_SELECTED_CONTEXT_MULTIPLIER"
     else
       run_cx python scripts/inspect_context_requirements.py \
         --data-dir data/processed/real_full_selected_mix \
         --output data/processed/real_full_selected_mix/context_requirements.json \
-        --context-multiplier 2.0 \
-        --write-context-config config/generated/real_full_selected_context_2x.yaml
+        --context-multiplier "$FULL_SELECTED_CONTEXT_MULTIPLIER" \
+        --write-context-config "$FULL_SELECTED_CONTEXT_CONFIG"
     fi
   fi
   exit 0
@@ -489,26 +521,26 @@ run_cx python scripts/count_graph_tokens.py \
 run_cx python scripts/inspect_context_requirements.py \
   --data-dir data/processed/real_full_selected_mix \
   --output data/processed/real_full_selected_mix/context_requirements.json \
-  --context-multiplier 2.0 \
-  --write-context-config config/generated/real_full_selected_context_2x.yaml
+  --context-multiplier "$FULL_SELECTED_CONTEXT_MULTIPLIER" \
+  --write-context-config "$FULL_SELECTED_CONTEXT_CONFIG"
 run_cx python scripts/check_dataset_integrity.py \
   --data-dir data/processed/real_full_selected_mix \
   --output data/processed/real_full_selected_mix/integrity.json
 BASH
 
 run_stage "03" "full_pretraining" "Complete public graph pretraining, validation, test, and inference" <<'BASH'
-if [[ ! -s config/generated/real_full_selected_context_2x.yaml ]]; then
+if [[ ! -s "$FULL_SELECTED_CONTEXT_CONFIG" ]]; then
   if [[ -s data/processed/real_full_selected_mix/context_requirements.json ]]; then
     run_cx python scripts/write_context_config_from_summary.py \
       --summary data/processed/real_full_selected_mix/context_requirements.json \
-      --output config/generated/real_full_selected_context_2x.yaml \
-      --context-multiplier 2.0
+      --output "$FULL_SELECTED_CONTEXT_CONFIG" \
+      --context-multiplier "$FULL_SELECTED_CONTEXT_MULTIPLIER"
   else
     run_cx python scripts/inspect_context_requirements.py \
       --data-dir data/processed/real_full_selected_mix \
       --output data/processed/real_full_selected_mix/context_requirements.json \
-      --context-multiplier 2.0 \
-      --write-context-config config/generated/real_full_selected_context_2x.yaml
+      --context-multiplier "$FULL_SELECTED_CONTEXT_MULTIPLIER" \
+      --write-context-config "$FULL_SELECTED_CONTEXT_CONFIG"
   fi
 fi
 run_cx python scripts/check_dataset_integrity.py \
@@ -546,7 +578,7 @@ cat "$FULL_TRAIN_OVERRIDE"
 run_train_stage \
   --config "$MODEL_CONFIG" \
   --config "$FULL_SELECTED_DATA_CONFIG" \
-  --config config/generated/real_full_selected_context_2x.yaml \
+  --config "$FULL_SELECTED_CONTEXT_CONFIG" \
   --config "$FULL_SELECTED_TRAIN_CONFIG" \
   --config "$FULL_TRAIN_OVERRIDE"
 run_cx python scripts/validate_stage.py \

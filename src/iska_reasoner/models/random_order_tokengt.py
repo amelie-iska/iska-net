@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 
 import torch
@@ -7,8 +8,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 
-from iska_reasoner.models.numeric_diffusion import ConditionalNumericDiffusionHead
-from iska_reasoner.tropical import TropicalTransformerEncoder, TropicalTransformerEncoderLayer
+from iska_reasoner.tropical import (
+    HybridFlashTropicalTransformerEncoderLayer,
+    TropicalTransformerEncoder,
+    TropicalTransformerEncoderLayer,
+)
 
 
 @dataclass
@@ -29,8 +33,6 @@ class RandomOrderTokenGTConfig:
     freeze_identifier_embeddings: bool = False
     source_numeric_dim: int = 4
     topology_dim: int = 7
-    numeric_dim: int = 0
-    numeric_diffusion_steps: int = 100
     gradient_checkpointing: bool = False
     lora_rank: int = 0
     lora_alpha: float = 16.0
@@ -43,7 +45,15 @@ class RandomOrderTokenGTConfig:
     tropical_symmetric: bool = True
     tropical_context_clamp: float = 20.0
     tropical_score_floor: float = -10_000.0
+    tropical_query_chunk_size: int = 0
     tropical_eps: float = 1e-6
+    hybrid_softmax_weight: float = 1.0
+    hybrid_tropical_weight: float = 1.0
+    hybrid_tropical_layers: list[int] | None = None
+    hybrid_tropical_every: int = 0
+    hybrid_tropical_include_last: bool = False
+    emit_attention_contact_maps: bool = False
+    attention_contact_maps_detach: bool = True
 
 
 class LoRALinear(nn.Module):
@@ -133,22 +143,62 @@ class RandomOrderTokenGT(nn.Module):
                 symmetric=cfg.tropical_symmetric,
                 context_clamp=cfg.tropical_context_clamp,
                 score_floor=cfg.tropical_score_floor,
+                query_chunk_size=cfg.tropical_query_chunk_size,
                 eps=cfg.tropical_eps,
             )
-            self.encoder = TropicalTransformerEncoder(layer, num_layers=cfg.num_layers)
+            self.encoder = TropicalTransformerEncoder(
+                layer,
+                num_layers=cfg.num_layers,
+                collect_contact_maps=cfg.emit_attention_contact_maps,
+                detach_contact_maps=cfg.attention_contact_maps_detach,
+            )
+        elif backend in {
+            "hybrid",
+            "flash_tropical",
+            "tropical_flash",
+            "mhta_flash",
+            "flash_mhta",
+            "hybrid_flash_tropical",
+        }:
+            layer = HybridFlashTropicalTransformerEncoderLayer(
+                hidden_dim=cfg.hidden_dim,
+                num_heads=cfg.num_heads,
+                ffn_dim=cfg.ffn_dim,
+                dropout=cfg.dropout,
+                norm_first=True,
+                hybrid_softmax_weight=cfg.hybrid_softmax_weight,
+                hybrid_tropical_weight=cfg.hybrid_tropical_weight,
+                use_projection=cfg.tropical_use_projection,
+                use_norm_shift=cfg.tropical_use_norm_shift,
+                projective_normalize=cfg.tropical_projective_normalize,
+                symmetric=cfg.tropical_symmetric,
+                context_clamp=cfg.tropical_context_clamp,
+                score_floor=cfg.tropical_score_floor,
+                query_chunk_size=cfg.tropical_query_chunk_size,
+                eps=cfg.tropical_eps,
+            )
+            self.encoder = TropicalTransformerEncoder(
+                layer,
+                num_layers=cfg.num_layers,
+                collect_contact_maps=cfg.emit_attention_contact_maps,
+                detach_contact_maps=cfg.attention_contact_maps_detach,
+            )
+            active_tropical_layers = self._resolve_hybrid_tropical_layers()
+            for layer_idx, encoder_layer in enumerate(self.encoder.layers):
+                if hasattr(encoder_layer, "enable_tropical"):
+                    encoder_layer.enable_tropical = layer_idx in active_tropical_layers
+            self.hybrid_tropical_layers = sorted(active_tropical_layers)
         else:
-            raise ValueError(f"Unknown attention_backend={cfg.attention_backend!r}; expected 'standard' or 'tropical'")
+            raise ValueError(
+                f"Unknown attention_backend={cfg.attention_backend!r}; "
+                "expected 'standard', 'tropical', or 'hybrid_flash_tropical'"
+            )
         self.norm = nn.LayerNorm(cfg.hidden_dim)
         self.lm_head = nn.Linear(cfg.hidden_dim, cfg.vocab_size, bias=False)
         self.value_head = nn.Linear(cfg.hidden_dim, 1)
         self.topology_head = nn.Sequential(
             nn.LayerNorm(cfg.hidden_dim),
             nn.Linear(cfg.hidden_dim, cfg.topology_dim),
-        )
-        self.numeric_head = (
-            ConditionalNumericDiffusionHead(cfg.hidden_dim, cfg.numeric_dim, cfg.numeric_diffusion_steps)
-            if cfg.numeric_dim > 0
-            else None
         )
         self.lm_head.weight = self.token_embed.weight
         if cfg.lora_rank > 0:
@@ -159,6 +209,38 @@ class RandomOrderTokenGT(nn.Module):
             self.apply_lora(rank=cfg.lora_rank, alpha=cfg.lora_alpha, dropout=cfg.lora_dropout)
             if cfg.freeze_base_for_lora:
                 self.freeze_non_lora_parameters()
+
+    def _resolve_hybrid_tropical_layers(self) -> set[int]:
+        """Resolve zero-based hybrid MHTA layer indices from config.
+
+        Explicit indices accept Python-style negatives, so ``[-1]`` means the
+        final encoder layer regardless of model depth. If no sparse setting is
+        provided, all layers keep MHTA active for backward-compatible hybrid
+        behavior.
+        """
+        num_layers = int(self.cfg.num_layers)
+        if num_layers <= 0:
+            return set()
+        if self.cfg.hybrid_tropical_layers is not None:
+            active: set[int] = set()
+            for raw_idx in self.cfg.hybrid_tropical_layers:
+                idx = int(raw_idx)
+                if idx < 0:
+                    idx += num_layers
+                if idx < 0 or idx >= num_layers:
+                    raise ValueError(
+                        f"hybrid_tropical_layers contains index {raw_idx}, "
+                        f"but model has {num_layers} layers"
+                    )
+                active.add(idx)
+            return active
+        every = int(self.cfg.hybrid_tropical_every)
+        if every > 0:
+            active = {idx for idx in range(num_layers) if (idx + 1) % every == 0}
+            if self.cfg.hybrid_tropical_include_last:
+                active.add(num_layers - 1)
+            return active
+        return set(range(num_layers))
 
     def _init_identifier_embeddings(self) -> None:
         """Initialize graph identifier rows as an orthogonal or semi-orthogonal table."""
@@ -190,16 +272,39 @@ class RandomOrderTokenGT(nn.Module):
         for name, param in self.named_parameters():
             param.requires_grad = "lora_" in name
 
+    def _finalize_checkpointed_encoder_cache(self, output: torch.Tensor, buckets: dict[str, list[torch.Tensor]], contact_maps: list[torch.Tensor]) -> None:
+        if not hasattr(self.encoder, "last_attention_metrics"):
+            return
+        self.encoder.last_attention_metrics = {
+            key: torch.stack(values).mean()
+            for key, values in buckets.items()
+            if values
+        }
+        if any(key.startswith("tropical_attention/") for key in self.encoder.last_attention_metrics):
+            self.encoder.last_attention_metrics["tropical_attention/enabled"] = output.new_tensor(1.0)
+        if hasattr(self.encoder, "last_attention_maps"):
+            self.encoder.last_attention_maps = torch.stack(contact_maps, dim=1) if contact_maps else None
+
     def _encode(self, x: torch.Tensor, causal_mask: torch.Tensor | None, key_padding_mask: torch.Tensor) -> torch.Tensor:
         if not self.cfg.gradient_checkpointing or not self.training:
             return self.encoder(x, mask=causal_mask, src_key_padding_mask=key_padding_mask)
         hidden = x
+        buckets: dict[str, list[torch.Tensor]] = defaultdict(list)
+        contact_maps: list[torch.Tensor] = []
         for layer in self.encoder.layers:
             def layer_forward(inp: torch.Tensor, layer=layer) -> torch.Tensor:
                 return layer(inp, src_mask=causal_mask, src_key_padding_mask=key_padding_mask)
             hidden = checkpoint(layer_forward, hidden, use_reentrant=False)
+            for key, value in getattr(layer, "last_attention_metrics", {}).items():
+                buckets[key].append(value)
+            if getattr(self.encoder, "collect_contact_maps", False):
+                contact_map = getattr(layer, "last_attention_contact_map", None)
+                if contact_map is not None:
+                    detach = bool(getattr(self.encoder, "detach_contact_maps", True))
+                    contact_maps.append(contact_map.detach() if detach else contact_map)
         if self.encoder.norm is not None:
             hidden = self.encoder.norm(hidden)
+        self._finalize_checkpointed_encoder_cache(hidden, buckets, contact_maps)
         return hidden
 
     def forward(
@@ -214,8 +319,6 @@ class RandomOrderTokenGT(nn.Module):
         causal_mask: torch.Tensor | None = None,
         labels: torch.Tensor | None = None,
         topology_targets: torch.Tensor | None = None,
-        numeric_targets: torch.Tensor | None = None,
-        numeric_mask: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         bsz, seq_len = input_ids.shape
         device = input_ids.device
@@ -254,6 +357,9 @@ class RandomOrderTokenGT(nn.Module):
         attention_metrics = getattr(self.encoder, "last_attention_metrics", None)
         if attention_metrics:
             output["attention_metrics"] = attention_metrics
+        attention_contact_maps = getattr(self.encoder, "last_attention_maps", None)
+        if attention_contact_maps is not None:
+            output["attention_contact_maps"] = attention_contact_maps
         if labels is not None:
             loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), labels.reshape(-1), ignore_index=-100)
             with torch.no_grad():
@@ -264,9 +370,6 @@ class RandomOrderTokenGT(nn.Module):
             output["token_accuracy"] = acc
         if topology_targets is not None:
             output["topology_loss"] = F.mse_loss(topology_pred, topology_targets.to(topology_pred.dtype))
-        if self.numeric_head is not None and numeric_targets is not None and numeric_mask is not None:
-            numeric_out = self.numeric_head(hidden[:, 0], numeric_targets.to(hidden.dtype), numeric_mask)
-            output.update(numeric_out)
         return output
 
     def score_next_tokens(self, batch: dict[str, torch.Tensor], candidate_ids: torch.Tensor) -> torch.Tensor:
@@ -291,6 +394,6 @@ class RandomOrderTokenGT(nn.Module):
         return logits.gather(1, candidate_ids)
 
 
-def build_model_from_config(model_cfg: dict[str, int | float]) -> RandomOrderTokenGT:
+def build_model_from_config(model_cfg: dict[str, object]) -> RandomOrderTokenGT:
     cfg = RandomOrderTokenGTConfig(**model_cfg)
     return RandomOrderTokenGT(cfg)

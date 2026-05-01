@@ -1,0 +1,24 @@
+loss:
+  # Optional UMA-stage objective. It is active only for examples that carry
+  # explicit UMA/coupling/influence/trajectory feedback target records; ordinary
+  # sequence-only rows contribute zero to this loss.
+  uma_contact_alignment_weight: 0.05
+  uma_contact_embedding_weight: 0.5
+  # Higher Kelvin oracle rows should keep broader contact-map and embedding
+  # support; lower Kelvin rows should sharpen toward stable contacts.
+  uma_contact_temperature_diversity_weight: 0.5
+  # The full context can be 926 tokens. Subsample token positions for the
+  # contact/embedding entropy objective so it stays 4090-safe.
+  uma_contact_max_tokens: 192
+
+hidden_topology:
+  folding_contact_enabled: true
+  # During training, use MHTA contact maps for folding-contact metrics. Set this
+  # true only for slower diagnostics that also need full hidden geometry fusion.
+  folding_contact_include_hidden: false
+
+model:
+  emit_attention_contact_maps: true
+  # Set false so the UMA contact loss can backpropagate into MHTA score
+  # geometry. This is more memory intensive than detached diagnostics.
+  attention_contact_maps_detach: false

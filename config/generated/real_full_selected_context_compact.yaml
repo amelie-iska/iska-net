@@ -1,0 +1,11 @@
+model:
+  max_seq_len: 926
+data:
+  max_source_tokens: 899
+  max_target_tokens: 13
+  max_seq_len: 926
+context_audit:
+  context_multiplier: 1.0
+  max_model_sequence_tokens_untruncated: 926
+  max_source_tokens_required: 899
+  max_target_tokens_required: 13

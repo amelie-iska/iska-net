@@ -77,7 +77,7 @@ Key design choices from this pass:
 The deferred science/data items are now implemented as local or opt-in paths rather than default bulk downloads.
 
 - SFM/NatureLM full-corpus reconstruction is represented by local preparation modes for PubChem, UniProt, RefSeq/NCBI, and Materials Project rows through `scripts/prepare_science_sources.py`; the SFM repo itself is used for reference README/checkpoint/domain-token provenance.
-- UniGenX-style numeric modeling is implemented as a conditional diffusion head over extracted numeric graph fields. The corrected UniGenX source is the `amelie-iska/UniGenX` GitHub repository, whose dictionary/tokenizer files are extracted into the local vocabulary.
+- UniGenX-style numeric modeling is used as methodology background, but the active UGM implementation keeps numeric and structure-candidate values in the autoregressive graph-token stream. The corrected UniGenX source is the `amelie-iska/UniGenX` GitHub repository, whose dictionary/tokenizer files are extracted into the local vocabulary.
 - User-provided local audio metadata extraction remains available for rows with `local_audio_path` or `audio_path`, but no external audio corpus is part of the SFM/NatureLM or UniGenX science pipeline.
 - Protein-ligand docking and EC-number protein generation are represented by graphifiers for local PDBbind/docking rows and FASTA/CSV EC rows.
 - ChEMBL/BindingDB ingestion is represented by local CSV/TSV normalization plus the small public `jglaser/binding_affinity` Hugging Face sample for smoke testing.
@@ -99,7 +99,7 @@ Architecture and baseline research:
 - ESM3 and ProGen2 motivate protein sequence/structure/function language modeling.
 - SELFIES and Group SELFIES motivate robust small-molecule tokens and fragment motifs.
 - NatureLM/SFM remains the multi-domain sequence/source framing for small molecules, materials, proteins, DNA, and RNA.
-- UniGenX remains the key reference for coupling symbolic autoregression with numeric/structure diffusion-style objectives.
+- UniGenX remains a key reference for coupling symbolic autoregression with numeric/structure generation. UGM deliberately chooses the autoregressive graph-record variant for the current implementation, including identity-bearing coordinate tokens rather than a parallel numeric diffusion loss.
 - UMA/OMol25, GEOM, and SPICE motivate oracle-feedback scoring, evaluation protocols, and later-phase physics supervision. In the first run, UMA is an external temperature-conditioned oracle/reward source rather than a direct energy/force-label dataset.
 - UniProt, InterPro, PROSITE, CATH, RNAcentral, Rfam, NatureLM/SFM-style science rows, UniGenX-style sequence/function rows, and ProTrek-style sequence/function rows are intended first-run sequence/function families, subject to license and contamination review. RNA 3D Hub, PDB/RCSB, NAKB, ATLAS, mdCATH, GEOM, SPICE, and OMol/UMA-family resources are evaluation, oracle, or future-phase sources unless reduced to safe train-split sequence motif vocabularies.
 

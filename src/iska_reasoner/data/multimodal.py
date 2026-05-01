@@ -437,6 +437,10 @@ def _bin_coord(value: float | None) -> str:
     return "pos_far"
 
 
+def _coord_record_token(frame_idx: int, atom_idx: int, axis: str, value: float | None) -> str:
+    return f"COORD:f{frame_idx}:a{atom_idx}:{axis}:{_bin_coord(value)}"
+
+
 def _bin_energy(value: float | None) -> str:
     if value is None:
         return "medium"
@@ -483,8 +487,6 @@ def multimodal_reference_tokens(extra_motif_paths: Iterable[str | Path] = ()) ->
         "UGM:task:structure_dynamics_proxy",
         "UGM:oracle:uma_feedback",
         "UGM:decoder:random_order_ar",
-        "UGM:decoder:masked_discrete_diffusion",
-        "UGM:decoder:discrete_flow_matching",
         "UGM:decoder:gflownet",
         "UGM:serializer:pdb",
         "UGM:serializer:text",
@@ -506,7 +508,13 @@ def multimodal_reference_tokens(extra_motif_paths: Iterable[str | Path] = ()) ->
     tokens.extend(f"TEMP_ANCHOR:{temp}K" for temp in TEMPERATURES_K)
     tokens.extend(f"TEMP_BIN:{lo}_{hi}K" for lo, hi in zip(TEMPERATURE_BIN_EDGES_K[:-1], TEMPERATURE_BIN_EDGES_K[1:]))
     tokens.extend(f"DIST:{bin_name}" for bin_name in DISTANCE_BINS_A)
-    tokens.extend(f"COORD:{axis}:{bin_name}" for axis in ["x", "y", "z"] for bin_name in COORDINATE_BINS)
+    tokens.extend(
+        f"COORD:f{frame}:a{atom}:{axis}:{bin_name}"
+        for frame in range(4)
+        for atom in range(48)
+        for axis in ["x", "y", "z"]
+        for bin_name in COORDINATE_BINS
+    )
     tokens.extend(f"ENERGY:{bin_name}" for bin_name in ENERGY_BINS)
     tokens.extend(f"FORCE:mag:{bin_name}" for bin_name in FORCE_MAGNITUDE_BINS)
     tokens.extend(f"FORCE:dir:{direction}" for direction in FORCE_DIRECTIONS)
@@ -726,7 +734,13 @@ def _add_frames(
             edges.append(Edge(src=parent, dst=coord_id, type="has_coordinate"))
             edges.append(Edge(src=frame_id, dst=coord_id, type="contains_coordinate"))
             if atom_idx < 48 and frame_idx < 4:
-                target_tokens.extend([f"COORD:x:{_bin_coord(x)}", f"COORD:y:{_bin_coord(y)}", f"COORD:z:{_bin_coord(z)}"])
+                target_tokens.extend(
+                    [
+                        _coord_record_token(frame_idx, atom_idx, "x", x),
+                        _coord_record_token(frame_idx, atom_idx, "y", y),
+                        _coord_record_token(frame_idx, atom_idx, "z", z),
+                    ]
+                )
         energy = frame.get("energy") if isinstance(frame, dict) else None
         energy = row.get("energy") if energy is None else energy
         energy_value = _round_float(energy)
