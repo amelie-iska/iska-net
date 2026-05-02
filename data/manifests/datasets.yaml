@@ -214,6 +214,22 @@ datasets:
     default_limit: 16
     stage: biomed_bioactivity
     notes: "Protein-sequence/ligand-SMILES binding affinity substitute sourced from BindingDB/PDBbind/BioLIP/BindingMOAD; review upstream license before scaling."
+  - name: uniprot_features_local_export
+    method: local_file
+    split: train
+    license: CC-BY-4.0/review-upstream
+    default_limit: 0
+    manifest_only: true
+    stage: protein_function_description
+    notes: "Local UniProtKB reviewed/unreviewed exports with sequence, function, GO, keyword, subcellular, cofactor, catalytic, subunit, feature, and binding-site columns. Prepare with scripts/prepare_science_sources.py --kind uniprot_features."
+  - name: biomolecular_complex_affinity_local
+    method: local_file
+    split: train
+    license: review-upstream
+    default_limit: 0
+    manifest_only: true
+    stage: biomolecular_complex_affinity
+    notes: "Local affinity rows for protein-protein, protein-RNA, protein-DNA, protein-ligand, RNA-ligand, or mixed biomolecular complexes. Supported fields include components, protein_sequence_a/b, rna_sequence, dna_sequence, ligand_smiles, affinity/Kd/Ki/IC50/kon/koff/dG, units, interaction_type, temperature, pH, assay, and buffer."
   - name: openai_graphwalks_train
     dataset_id: openai/graphwalks
     config: default

@@ -683,21 +683,14 @@ run_cx python scripts/infer.py \
   --output outputs/multimodal_phase2_4090/infer_multimodal_sequence.json
 BASH
 
-run_stage "09" "multimodal_oracle_gflownet" "Multimodal oracle-feedback GFlowNet stage" <<'BASH'
-if [[ "$REQUIRE_UMA_WEIGHTS" == "1" ]]; then
-  run_cx python scripts/download_uma_weights.py \
-    --repo data/external_repos/fairchem \
-    --model-name "$UMA_MODEL_NAME" \
-    --task-name "$UMA_TASK_NAME" \
-    --device "$UMA_DEVICE"
-fi
+run_stage "09" "sft_gflownet" "SFT GFlowNet stage" <<'BASH'
 run_train_stage \
   --config config/data/multimodal_graphs_4090.yaml \
-  --config config/train/multimodal_oracle_gflownet_4090.yaml
+  --config "$GFLOWNET_SFT_CONFIG"
 run_cx python scripts/validate_gflownet.py \
   --config config/data/multimodal_graphs_4090.yaml \
-  --config config/train/multimodal_oracle_gflownet_4090.yaml \
-  --config config/validate/multimodal_4090_gflownet_validation.yaml \
+  --config "$GFLOWNET_SFT_CONFIG" \
+  --config "$GFLOWNET_SFT_VALIDATION_CONFIG" \
   --device "$VALIDATION_DEVICE"
 BASH
 
@@ -736,18 +729,21 @@ run_cx python scripts/infer.py \
   --output outputs/structure_dynamics_4090/infer_structure_dynamics_sequence.json
 BASH
 
-run_stage "11" "structure_dynamics_oracle_gflownet" "Structure/dynamics oracle-feedback GFlowNet stage" <<'BASH'
-if [[ "$ENABLE_STRUCTURE_TRAINING" != "1" ]]; then
-  printf 'Skipping structure/dynamics oracle GFlowNet because ENABLE_STRUCTURE_TRAINING=%s.\n' "$ENABLE_STRUCTURE_TRAINING"
-  exit 0
+run_stage "11" "structure_dynamics_gflownet" "Structure/dynamics GFlowNet stage" <<'BASH'
+if [[ "$REQUIRE_UMA_WEIGHTS" == "1" ]]; then
+  run_cx python scripts/download_uma_weights.py \
+    --repo data/external_repos/fairchem \
+    --model-name "$UMA_MODEL_NAME" \
+    --task-name "$UMA_TASK_NAME" \
+    --device "$UMA_DEVICE"
 fi
 run_train_stage \
-  --config config/data/structure_dynamics_graphs.yaml \
-  --config config/train/structure_dynamics_oracle_gflownet_4090.yaml
+  --config config/data/multimodal_graphs_4090.yaml \
+  --config "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG"
 run_cx python scripts/validate_gflownet.py \
-  --config config/data/structure_dynamics_graphs.yaml \
-  --config config/train/structure_dynamics_oracle_gflownet_4090.yaml \
-  --config config/validate/structure_dynamics_gflownet_validation.yaml \
+  --config config/data/multimodal_graphs_4090.yaml \
+  --config "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG" \
+  --config "$STRUCTURE_DYNAMICS_GFLOWNET_VALIDATION_CONFIG" \
   --device "$VALIDATION_DEVICE"
 BASH
 

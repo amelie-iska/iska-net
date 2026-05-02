@@ -1,0 +1,46 @@
+seed: 73
+stage:
+  name: biomed_annotations_affinity_sft
+run:
+  output_dir: outputs/biomed_annotations_affinity_250m
+  device: cuda
+train:
+  batch_size: 2
+  eval_batch_size: 2
+  num_workers: 8
+  eval_num_workers: 2
+  persistent_workers: true
+  pin_memory: true
+  prefetch_factor: 4
+  max_steps: full_epoch
+  full_epochs: 1.0
+  gradient_accumulation_steps: 18
+  learning_rate: 0.00016
+  weight_decay: 0.01
+  scheduler: cosine
+  max_grad_norm: 1.0
+  amp: true
+  log_every: 10
+  eval_every: 1000
+  eval_max_batches: 256
+  checkpoint_every: 1000
+loss:
+  topology_weight: 0.05
+  hidden_geometry_weight: 0.01
+tropical:
+  enabled: true
+  temperature: 1.0
+  temperature_min: 0.4
+  anneal_steps: 2000
+wandb:
+  enabled: true
+  project: iska-ugm
+  mode: online
+  group: biomed-annotations-affinity-250m
+  tags:
+    - biomed
+    - uniprot
+    - complex-affinity
+    - annotations
+    - random-order
+    - 250m

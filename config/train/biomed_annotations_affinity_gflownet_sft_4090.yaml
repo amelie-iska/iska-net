@@ -1,0 +1,34 @@
+seed: 79
+stage:
+  name: gflownet_sft
+run:
+  output_dir: outputs/biomed_annotations_affinity_gflownet_sft_4090
+  device: cuda
+train:
+  batch_size: 32
+  max_steps: 3000
+  learning_rate: 0.0003
+  weight_decay: 0.0
+  log_every: 10
+gflownet:
+  mode: sft
+  max_actions: 192
+  hidden_dim: 256
+  init_log_z: 0.0
+  max_traj_steps: 12
+  epsilon: 0.05
+  use_context: true
+  learn_backward_policy: true
+  subtrajectory_weight: 0.1
+wandb:
+  enabled: true
+  project: iska-ugm
+  mode: online
+  group: biomed-annotations-affinity-gflownet-sft
+  tags:
+    - biomed
+    - uniprot
+    - complex-affinity
+    - gflownet
+    - sft
+    - trajectory-balance

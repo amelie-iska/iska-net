@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import os
+import subprocess
+from pathlib import Path
+
 import torch
 
+from iska_reasoner.data.bioselfies import add_bioselfies_graph, bioselfies_from_modalities
 from iska_reasoner.data.dataset import RandomOrderCollator, coordinate_targets_by_index, extract_numeric_values
 from iska_reasoner.data.graphify import graphify_rows
 from iska_reasoner.data.multimodal import (
@@ -23,7 +28,7 @@ from iska_reasoner.data.vocab import build_vocab
 from iska_reasoner.graph.orders import build_orders, oracle_enabling_order, scientific_graph_order
 from iska_reasoner.models.random_order_tokengt import RandomOrderTokenGT, RandomOrderTokenGTConfig
 from iska_reasoner.tools import multimodal_metrics_for_example, multimodal_oracle_reward, verify_example_tokens
-from iska_reasoner.training.uma_coordinate import uma_coordinate_head_oracle_loss
+from iska_reasoner.training.uma_coordinate import uma_coordinate_head_oracle_loss, uma_internal_coordinate_head_oracle_loss
 
 
 def _row():
@@ -76,6 +81,73 @@ def test_multimodal_reference_vocab_contains_required_families():
     assert "SEQ_STRUCT_DYN_PROXY:temperature_conditioned" in tokens
     assert "UGM:oracle:uma_feedback" in tokens
     assert "peptide" in BOND_TYPES
+    assert "UGM:tokenizer:bioselfies" in tokens
+    assert "BIOSELFIES:[AA:A]" in tokens
+    assert "BIOSELFIES:[RNA:A]" in tokens
+    assert "HYBRID:atom_patch" in tokens
+    assert "HBOND:candidate" in tokens
+    assert "TORSION:sidechain_chi" in tokens
+    assert "INTERNAL_COORD:protein_phi" in tokens
+    assert "INTERNAL_COORD_QUERY:protein_phi" in tokens
+    assert "ADAPTIVE_PATCH:residue_atom_patch" in tokens
+    assert "CONTACT_PATCH:hbond" in tokens
+
+
+def test_bioselfies_decoder_is_total_and_graph_valid():
+    nodes = []
+    edges = []
+    result = add_bioselfies_graph(
+        nodes,
+        edges,
+        "[AA:M][AA:K][LINK:peptide][AA:T][CHAIN:break][RNA:A][RNA:U][HBOND:candidate][PATCH:open][UNK:???]",
+    )
+    assert result.residue_count == 3
+    assert result.base_count == 2
+    assert result.warnings
+    assert "UGM:tokenizer:bioselfies" in result.target_tokens
+    assert "AA:M" in result.target_tokens
+    assert "RNA:U" in result.target_tokens
+    assert "BOND:peptide" in result.target_tokens
+    assert "HBOND:candidate" in result.target_tokens
+    assert "HYBRID:open_patch" in result.target_tokens
+    assert "BIOSELFIES:UNKNOWN" in result.target_tokens
+    node_ids = {node.id for node in nodes}
+    assert all(edge.src in node_ids and edge.dst in node_ids for edge in edges)
+
+
+def test_bioselfies_only_graphification_stays_sequence_only_and_feeds_uma_queries():
+    row = {
+        "prompt": "Use BioSELFIES-only graph tokens for oracle-guided dynamics.",
+        "task": "structure_dynamics_proxy",
+        "input_representation": "bioselfies",
+        "protein_sequence": "MKT",
+        "rna_sequence": "AUG",
+        "temperature": 355.0,
+        "oracle": {"name": "uma"},
+    }
+    assert bioselfies_from_modalities(row).startswith("[AA:M][AA:K][AA:T]")
+    ex = graphify_multimodal(row, 11, "local_multimodal_graph_to_graph")
+    assert ex.metadata["bioselfies_enabled"] is True
+    assert ex.metadata["bioselfies_only"] is True
+    assert "bioselfies" in ex.metadata["modalities"]
+    assert "UGM:tokenizer:bioselfies" in ex.target_tokens
+    assert "BIOSELFIES:[AA:M]" in ex.target_tokens
+    assert "BIOSELFIES:[RNA:A]" in ex.target_tokens
+    assert not any(node.id == "protein" for node in ex.nodes)
+    assert not graph_structure_violations(ex)
+
+    vocab = build_vocab([ex], extra_tokens=multimodal_reference_tokens())
+    collator = RandomOrderCollator(
+        vocab,
+        max_source_tokens=64,
+        max_target_tokens=32,
+        max_seq_len=160,
+        max_uma_coordinate_atoms=8,
+        order_mode="first",
+    )
+    batch = collator([ex])
+    assert batch["uma_coordinate_query_mask"].sum().item() == 8
+    assert batch["uma_coordinate_symbols"][0][:4] == ["N", "C", "C", "O"]
 
 
 def test_multimodal_graphification_defaults_to_sequence_only():
@@ -97,6 +169,9 @@ def test_multimodal_graphification_defaults_to_sequence_only():
     assert any(tok.startswith("TOKEN_COUPLING:uma:temperature_oracle:") for tok in ex.target_tokens)
     assert any(tok.startswith("TOKEN_MOTION:uma:") for tok in ex.target_tokens)
     assert "SEQ_STRUCT_DYN_PROXY:no_structure_file" in ex.target_tokens
+    assert "INTERNAL_COORD:protein_phi" in ex.target_tokens
+    assert "ADAPTIVE_PATCH:residue_atom_patch" in ex.target_tokens
+    assert "CONTACT_PATCH:hbond" in ex.target_tokens
     assert not graph_structure_violations(ex)
     assert ex.metadata["ignored_structure_fields"]
     assert ex.metadata["temperature"] == 315.5
@@ -217,6 +292,91 @@ def test_protrek_style_function_description_rows_are_sequence_only_graphs():
     assert any(tok.startswith("ATTN_BIN:function_to_reason:") for tok in ex.target_tokens)
 
 
+def test_uniprot_binding_site_and_feature_rows_become_sequence_grounded_graphs():
+    row = {
+        "Entry": "P12345",
+        "Sequence": "MKTWYV",
+        "Protein names": "Toy kinase",
+        "Gene Names": "toyK",
+        "Organism": "Example organism",
+        "Gene Ontology IDs": "GO:0005524; GO:0004672",
+        "Keywords": "ATP-binding; Kinase",
+        "Binding site": [{"type": "binding site", "ligand": "ATP", "position": 4, "description": "ATP binding"}],
+        "Subcellular location [CC]": "Cytoplasm",
+        "Cofactor": "Mg2+",
+        "Catalytic activity": "ATP + substrate = ADP + product",
+        "function_description": "Binds ATP and phosphorylates substrate proteins.",
+    }
+    graph_row = next(graphify_rows([row], "uniprot_features_local_export"))
+    ex = graphify_multimodal(
+        {
+            "task": "structure_dynamics_proxy",
+            "protein_sequence": row["Sequence"],
+            "temperature": 330.0,
+            "oracle": {"name": "uma"},
+        },
+        0,
+        "local_multimodal_graph_to_graph",
+    )
+    assert graph_row["task"] == "unigenx_ec_protein_generation"
+    assert "UNIPROT:feature:binding_site" in graph_row["target_tokens"]
+    assert any(tok.startswith("UNIPROT:go:") for tok in graph_row["target_tokens"])
+    assert any(tok.startswith("UNIPROT:keyword:") for tok in graph_row["target_tokens"])
+    assert any(node["type"] == "uniprot_feature" for node in graph_row["nodes"])
+    assert any(edge["type"] == "marks_binding_site" for edge in graph_row["edges"])
+    assert not graph_structure_violations(ex)
+
+
+def test_biomolecular_complex_affinity_rows_support_non_ligand_complexes():
+    row = {
+        "protein_sequence_a": "MKTWYV",
+        "protein_sequence_b": "ACDEFG",
+        "Kd": "12",
+        "units": "nM",
+        "interaction_type": "protein_protein",
+        "temperature": "310K",
+        "pH": "7.4",
+    }
+    graph_row = next(graphify_rows([row], "biomolecular_complex_affinity_local"))
+    assert graph_row["task"] == "biomolecular_complex_affinity"
+    assert "BIOMED:complex_affinity" in graph_row["target_tokens"]
+    assert "COMPLEX:component:protein" in graph_row["target_tokens"]
+    assert "COMPLEX:interaction:protein_protein" in graph_row["target_tokens"]
+    assert any(tok.startswith("AFFINITY:Kd:12") for tok in graph_row["target_tokens"])
+    assert any(node["type"] == "binding_affinity" for node in graph_row["nodes"])
+    assert any(edge["type"] == "forms_complex_with" for edge in graph_row["edges"])
+
+
+def test_biomed_annotations_affinity_direct_script_dry_run(tmp_path):
+    env = os.environ.copy()
+    env.update(
+        {
+            "DRY_RUN": "1",
+            "RUN_ID": "pytest-biomed-direct",
+            "LOG_ROOT": str(tmp_path / "logs"),
+            "DATA_DIR": str(tmp_path / "processed"),
+            "UNIPROT_GRAPH_JSONL": str(tmp_path / "uniprot" / "all.jsonl"),
+            "AFFINITY_GRAPH_JSONL": str(tmp_path / "affinity" / "all.jsonl"),
+            "UNIPROT_FEATURES_INPUTS": str(tmp_path / "uniprot.tsv"),
+            "AFFINITY_INPUTS": str(tmp_path / "affinity.tsv"),
+            "TRAIN_PHASES": "all",
+            "WANDB_CONFIG": "config/train/overrides/wandb_offline.yaml",
+        }
+    )
+    result = subprocess.run(
+        ["bash", "scripts/train_biomed_annotations_affinity_direct.sh"],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    assert "Direct UniProt + affinity training" in result.stdout
+    assert "config/train/biomed_annotations_affinity_250m.yaml" in result.stdout
+    assert "config/train/biomed_annotations_affinity_gflownet_sft_4090.yaml" in result.stdout
+    assert "config/train/biomed_annotations_affinity_structure_dynamics_gflownet_4090.yaml" in result.stdout
+
+
 def test_multimodal_graphification_allows_structure_only_when_explicit():
     ex = graphify_multimodal(_row(), 0, "local_multimodal_graph_to_graph", molecular_input_policy=ALLOW_STRUCTURE)
     assert any(node.type == "structure_motif" for node in ex.nodes)
@@ -237,7 +397,7 @@ def test_multimodal_dispatch_and_collator_build():
     ex = graphify_multimodal(_row(), 0, "local_multimodal_graph_to_graph", molecular_input_policy=ALLOW_STRUCTURE)
     assert rows[0]["task"] == "multimodal_graph_to_graph"
     vocab = build_vocab([ex], extra_tokens=multimodal_reference_tokens())
-    collator = RandomOrderCollator(vocab, max_source_tokens=128, max_target_tokens=32, max_numeric_targets=8)
+    collator = RandomOrderCollator(vocab, max_source_tokens=128, max_target_tokens=96, max_numeric_targets=8)
     batch = collator([ex])
     assert batch["input_ids"].shape[0] == 1
     assert batch["numeric_mask"].sum().item() >= 3
@@ -336,6 +496,33 @@ def test_uma_coordinate_queries_come_from_protein_sequence_without_structure_lab
     assert batch["coordinate_mask"].sum().item() == 0
 
 
+def test_internal_coordinate_query_slots_come_from_sequence_without_structure_labels():
+    ex = graphify_multimodal(
+        {
+            "task": "structure_dynamics_proxy",
+            "protein_sequence": "MKT",
+            "temperature": 340.0,
+            "oracle": {"name": "uma"},
+        },
+        19,
+        "local_multimodal_graph_to_graph",
+    )
+    assert not graph_structure_violations(ex)
+    vocab = build_vocab([ex], extra_tokens=multimodal_reference_tokens())
+    collator = RandomOrderCollator(
+        vocab,
+        max_source_tokens=48,
+        max_target_tokens=32,
+        max_seq_len=160,
+        max_internal_coordinate_actions=12,
+        order_mode="first",
+    )
+    batch = collator([ex])
+    assert batch["internal_coordinate_query_mask"].sum().item() == 12
+    assert set(batch["internal_coordinate_types"][0]) >= {"protein_phi", "protein_psi", "protein_omega"}
+    assert batch["coordinate_mask"].sum().item() == 0
+
+
 def test_uma_coordinate_head_proxy_loss_backprops_through_coordinate_readout():
     ex = graphify_multimodal(
         {
@@ -405,6 +592,80 @@ def test_uma_coordinate_head_proxy_loss_backprops_through_coordinate_readout():
         param.grad.detach().abs().sum().item()
         for name, param in model.named_parameters()
         if name.startswith("coordinate_head") and param.grad is not None
+    )
+    assert grad_norm > 0.0
+
+
+def test_uma_internal_coordinate_head_proxy_loss_backprops_through_action_readout():
+    ex = graphify_multimodal(
+        {
+            "task": "structure_dynamics_proxy",
+            "protein_sequence": "MKT",
+            "temperature": 340.0,
+            "oracle": {"name": "uma"},
+        },
+        20,
+        "local_multimodal_graph_to_graph",
+    )
+    vocab = build_vocab([ex], extra_tokens=multimodal_reference_tokens())
+    collator = RandomOrderCollator(
+        vocab,
+        max_source_tokens=48,
+        max_target_tokens=32,
+        max_seq_len=160,
+        max_internal_coordinate_actions=12,
+        order_mode="first",
+    )
+    batch = collator([ex])
+    cfg = RandomOrderTokenGTConfig(
+        vocab_size=len(vocab.token_to_id),
+        hidden_dim=48,
+        num_layers=1,
+        num_heads=4,
+        ffn_dim=96,
+        max_seq_len=160,
+        max_nodes=128,
+        max_slots=64,
+        endpoint_dim=16,
+        identifier_dim=16,
+        internal_coordinate_head_enabled=True,
+    )
+    model = RandomOrderTokenGT(cfg)
+    out = model(
+        input_ids=batch["input_ids"],
+        kind_ids=batch["kind_ids"],
+        slot_ids=batch["slot_ids"],
+        endpoint_ids=batch["endpoint_ids"],
+        identifier_ids=batch["identifier_ids"],
+        source_numeric_features=batch["source_numeric_features"],
+        attention_mask=batch["attention_mask"],
+        causal_mask=batch["causal_mask"],
+        labels=batch["labels"],
+        coordinate_targets=batch["coordinate_targets"],
+        coordinate_mask=batch["coordinate_mask"],
+    )
+    loss, metrics = uma_internal_coordinate_head_oracle_loss(
+        out["internal_coordinate_mean"],
+        batch["internal_coordinate_query_mask"],
+        batch["internal_coordinate_type_ids"],
+        batch["internal_coordinate_residue_indices"],
+        batch["examples"],
+        backend="proxy",
+        max_examples=1,
+        max_residues=3,
+        max_atoms=8,
+        dynamics_steps=2,
+        force_step_size=0.05,
+    )
+    assert torch.isfinite(loss)
+    assert metrics["uma_internal/oracle_examples"] == 1.0
+    assert metrics["uma_internal/dynamics_steps"] == 2.0
+    assert metrics["uma_internal/force_rms_ev_per_a"] > 0.0
+    loss.backward()
+    grad_norm = sum(
+        param.grad.detach().abs().sum().item()
+        for name, param in model.named_parameters()
+        if name.startswith("internal_coordinate_head") and param.grad is not None
     )
     assert grad_norm > 0.0
 

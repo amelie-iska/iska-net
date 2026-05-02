@@ -5,6 +5,11 @@ import re
 from pathlib import Path
 from typing import Any, Iterable
 
+from iska_reasoner.data.bioselfies import (
+    add_bioselfies_graph,
+    bioselfies_from_modalities,
+    reference_bioselfies_tokens,
+)
 from iska_reasoner.data.motifs import (
     DEFAULT_STRUCTURE_MOTIFS,
     build_motif_vocabulary,
@@ -194,6 +199,35 @@ STRUCTURE_DYNAMICS_PROXY_TOKENS = [
     "candidate_motion_graph",
     "uma_trajectory_proxy",
     "physics_scored",
+]
+INTERNAL_COORD_ACTION_TOKENS = [
+    "protein_phi",
+    "protein_psi",
+    "protein_omega",
+    "sidechain_chi",
+    "rna_alpha",
+    "rna_beta",
+    "rna_gamma",
+    "rna_delta",
+    "rna_epsilon",
+    "rna_zeta",
+    "glycosidic_chi",
+    "sugar_pucker",
+    "ligand_torsion",
+]
+ADAPTIVE_PATCH_TOKENS = [
+    "residue_atom_patch",
+    "ligand_atom_patch",
+    "nucleic_acid_atom_patch",
+    "open_patch",
+    "close_patch",
+]
+CONTACT_PATCH_TOKENS = [
+    "sequence_local",
+    "long_range",
+    "hbond",
+    "base_pair",
+    "ligand_interface",
 ]
 
 
@@ -494,7 +528,8 @@ def multimodal_reference_tokens(extra_motif_paths: Iterable[str | Path] = ()) ->
         "UGM:serializer:selfies",
         "UGM:serializer:lean",
     ]
-    tokens.extend(f"UGM:modality:{name}" for name in ["text", "protein", "selfies", "dna", "rna", "all_atom", "trajectory"])
+    tokens.extend(f"UGM:modality:{name}" for name in ["text", "protein", "selfies", "bioselfies", "dna", "rna", "all_atom", "trajectory"])
+    tokens.extend(reference_bioselfies_tokens())
     tokens.extend(f"AA:{aa}" for aa in PROTEIN_AMINO_ACIDS + PROTEIN_EXTRA_RESIDUES)
     tokens.extend(f"DNA:{base}" for base in DNA_BASES + NUCLEIC_AMBIGUITY_CODES)
     tokens.extend(f"RNA:{base}" for base in RNA_BASES + NUCLEIC_AMBIGUITY_CODES)
@@ -539,6 +574,10 @@ def multimodal_reference_tokens(extra_motif_paths: Iterable[str | Path] = ()) ->
     tokens.extend(f"UMA_TRAJ_BIN:{action}:{level}" for action in TOKEN_MOTION_ACTIONS for level in ATTENTION_BIN_LEVELS)
     tokens.extend(f"SEQ_STRUCT_DYN_PROXY:{token}" for token in STRUCTURE_DYNAMICS_PROXY_TOKENS)
     tokens.extend(f"SEQ_STRUCT_DYN_PROXY:input:{modality}" for modality in ["selfies", "protein", "dna", "rna"])
+    tokens.extend(f"INTERNAL_COORD_QUERY:{token}" for token in INTERNAL_COORD_ACTION_TOKENS)
+    tokens.extend(f"INTERNAL_COORD:{token}" for token in INTERNAL_COORD_ACTION_TOKENS)
+    tokens.extend(f"ADAPTIVE_PATCH:{token}" for token in ADAPTIVE_PATCH_TOKENS)
+    tokens.extend(f"CONTACT_PATCH:{token}" for token in CONTACT_PATCH_TOKENS)
     return sorted(dict.fromkeys(tokens))
 
 
@@ -1117,6 +1156,35 @@ def _add_oracle_attention_motion_priors(
         edges.append(Edge(src=node_id, dst="structure_dynamics_proxy", type="updates_proxy_motion_state"))
         tokens.append(f"TOKEN_MOTION:uma:{action}:{level}")
         tokens.append(f"UMA_TRAJ_BIN:{action}:{level}")
+    prior_specs: list[tuple[str, str, str, str]] = []
+    if "protein" in modality_set:
+        prior_specs.extend(("internal_coordinate_prior", "INTERNAL_COORD", token, "protein") for token in ["protein_phi", "protein_psi", "protein_omega", "sidechain_chi"])
+        prior_specs.extend(("adaptive_patch_prior", "ADAPTIVE_PATCH", token, "protein") for token in ["residue_atom_patch", "open_patch", "close_patch"])
+        prior_specs.extend(("contact_patch_prior", "CONTACT_PATCH", token, "protein") for token in ["sequence_local", "long_range", "hbond"])
+    if "rna" in modality_set or "dna" in modality_set:
+        prior_specs.extend(
+            ("internal_coordinate_prior", "INTERNAL_COORD", token, "nucleic_acid")
+            for token in ["rna_alpha", "rna_beta", "rna_gamma", "rna_delta", "rna_epsilon", "rna_zeta", "glycosidic_chi", "sugar_pucker"]
+        )
+        prior_specs.extend(("adaptive_patch_prior", "ADAPTIVE_PATCH", token, "nucleic_acid") for token in ["nucleic_acid_atom_patch", "open_patch", "close_patch"])
+        prior_specs.extend(("contact_patch_prior", "CONTACT_PATCH", token, "nucleic_acid") for token in ["sequence_local", "base_pair", "hbond"])
+    if "selfies" in modality_set:
+        prior_specs.append(("internal_coordinate_prior", "INTERNAL_COORD", "ligand_torsion", "ligand"))
+        prior_specs.extend(("adaptive_patch_prior", "ADAPTIVE_PATCH", token, "ligand") for token in ["ligand_atom_patch", "open_patch", "close_patch"])
+        prior_specs.append(("contact_patch_prior", "CONTACT_PATCH", "ligand_interface", "ligand"))
+    for idx, (node_type, prefix, token, component) in enumerate(prior_specs):
+        node_id = f"{node_type}_{idx}"
+        nodes.append(
+            Node(
+                id=node_id,
+                type=node_type,
+                value=token,
+                features={"component": component, "oracle": "UMA", "sequence_only": True},
+            )
+        )
+        edges.append(Edge(src=node_id, dst="structure_dynamics_proxy", type="proposes_proxy_action"))
+        edges.append(Edge(src="uma_oracle", dst=node_id, type="scores_proxy_action"))
+        tokens.append(f"{prefix}:{token}")
     return tokens
 
 
@@ -1143,32 +1211,42 @@ def graphify_multimodal(
     edges.append(Edge(src="task", dst="prompt", type="specified_by"))
     target_tokens = ["UGM:graph_to_graph", f"UGM:task:{task_value}"]
     sequence_modalities: list[str] = []
+    bioselfies_text = _as_str(row.get("bioselfies") or row.get("bio_selfies") or row.get("BioSELFIES"))
+    representation = _as_str(row.get("input_representation") or row.get("tokenizer")).lower()
+    bioselfies_only = bool(row.get("bioselfies_only")) or representation in {"bioselfies", "bio_selfies", "bio-selfies"}
+    if bioselfies_only and not bioselfies_text:
+        bioselfies_text = bioselfies_from_modalities(row)
+    bioselfies_result = None
+    if bioselfies_text:
+        bioselfies_result = add_bioselfies_graph(nodes, edges, bioselfies_text, root_id="bioselfies")
+        sequence_modalities.extend(item for item in bioselfies_result.modalities if item not in sequence_modalities)
+        target_tokens.extend(bioselfies_result.target_tokens)
 
     protein_sequence = _as_str(row.get("protein_sequence") or row.get("sequence") or row.get("aa_sequence"))
-    if protein_sequence:
+    if protein_sequence and not bioselfies_only:
         sequence_modalities.append("protein")
         target_tokens.append("UGM:modality:protein")
         target_tokens.extend(_add_sequence(nodes, edges, protein_sequence, "protein", "protein_sequence", "amino_acid", "contains_residue", "AA", 512))
 
     selfies = _as_str(row.get("selfies") or row.get("SELFIES"))
-    if selfies:
+    if selfies and not bioselfies_only:
         sequence_modalities.append("selfies")
         target_tokens.extend(_add_selfies(nodes, edges, selfies))
 
     dna_sequence = _as_str(row.get("dna_sequence") or row.get("dna"))
-    if dna_sequence:
+    if dna_sequence and not bioselfies_only:
         sequence_modalities.append("dna")
         target_tokens.append("UGM:modality:dna")
         target_tokens.extend(_add_sequence(nodes, edges, dna_sequence, "dna", "dna_sequence", "dna_base", "contains_base", "DNA", 512))
 
     rna_sequence = _as_str(row.get("rna_sequence") or row.get("rna"))
-    if rna_sequence:
+    if rna_sequence and not bioselfies_only:
         sequence_modalities.append("rna")
         target_tokens.append("UGM:modality:rna")
         target_tokens.extend(_add_sequence(nodes, edges, rna_sequence, "rna", "rna_sequence", "rna_base", "contains_base", "RNA", 512))
 
     smiles = _as_str(row.get("smiles") or row.get("SMILES") or row.get("canonical_smiles"))
-    if smiles and not selfies:
+    if smiles and not selfies and not bioselfies_only:
         sequence_modalities.append("selfies")
         nodes.append(Node(id="smiles", type="smiles", value=smiles))
         edges.append(Edge(src="task", dst="smiles", type="has_modality"))
@@ -1205,7 +1283,7 @@ def graphify_multimodal(
     target_tokens = list(dict.fromkeys(target_tokens))
 
     ex = GraphExample(
-        id=f"{dataset_name}_{idx}_{_stable_id(prompt + protein_sequence[:32] + selfies + dna_sequence[:32] + rna_sequence[:32] + smiles)}",
+        id=f"{dataset_name}_{idx}_{_stable_id(prompt + bioselfies_text[:128] + protein_sequence[:32] + selfies + dna_sequence[:32] + rna_sequence[:32] + smiles)}",
         task="multimodal_graph_to_graph",
         nodes=nodes,
         edges=edges,
@@ -1217,6 +1295,10 @@ def graphify_multimodal(
             "temperature_anchor": temp_anchor,
             "temperature_range_k": [TEMPERATURE_MIN_K, TEMPERATURE_MAX_K],
             "modalities": _modalities_from_tokens(target_tokens),
+            "bioselfies_enabled": bool(bioselfies_text),
+            "bioselfies_only": bioselfies_only,
+            "bioselfies_warnings": bioselfies_result.warnings if bioselfies_result is not None else [],
+            "bioselfies_component_count": bioselfies_result.component_count if bioselfies_result is not None else 0,
             "atom_count": len(atom_ids),
             "bond_type_count": sum(1 for tok in target_tokens if tok.startswith("BOND:")),
             "frame_count": len(_frame_list(row)),

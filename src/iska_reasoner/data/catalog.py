@@ -16,9 +16,11 @@ LOCAL_SOURCE_LINKS = {
     "bindingdb_local_export": "https://www.bindingdb.org/",
     "naturelm_pubchem_local": "https://pubchem.ncbi.nlm.nih.gov/",
     "naturelm_uniprot_local": "https://www.uniprot.org/",
+    "uniprot_features_local_export": "https://www.uniprot.org/help/downloads",
     "naturelm_refseq_local": "https://www.ncbi.nlm.nih.gov/refseq/",
     "naturelm_materials_project_local": "https://materialsproject.org/",
     "pdbbind_docking_local": "http://www.pdbbind.org.cn/",
+    "biomolecular_complex_affinity_local": "https://www.ebi.ac.uk/intact/",
     "ec_protein_generation_local": "https://enzyme.expasy.org/",
 }
 

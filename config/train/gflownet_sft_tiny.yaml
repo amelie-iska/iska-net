@@ -1,0 +1,26 @@
+seed: 31
+stage:
+  name: gflownet_sft
+run:
+  output_dir: outputs/gflownet_sft_tiny
+  device: cuda
+train:
+  batch_size: 8
+  max_steps: 20
+  learning_rate: 0.0005
+  weight_decay: 0.0
+  log_every: 5
+gflownet:
+  mode: sft
+  max_actions: 64
+  hidden_dim: 128
+  init_log_z: 0.0
+  max_traj_steps: 8
+  epsilon: 0.05
+  use_context: true
+  learn_backward_policy: true
+  subtrajectory_weight: 0.1
+wandb:
+  enabled: false
+  project: iska-ugm
+  mode: offline

@@ -58,6 +58,9 @@ class RandomOrderTokenGTConfig:
     coordinate_target_scale: float = 10.0
     coordinate_logvar_min: float = -8.0
     coordinate_logvar_max: float = 4.0
+    internal_coordinate_head_enabled: bool = False
+    internal_coordinate_logvar_min: float = -8.0
+    internal_coordinate_logvar_max: float = 4.0
 
 
 class LoRALinear(nn.Module):
@@ -212,6 +215,15 @@ class RandomOrderTokenGT(nn.Module):
                 nn.GELU(),
                 nn.Dropout(cfg.dropout),
                 nn.Linear(cfg.hidden_dim, 6),
+            )
+        self.internal_coordinate_head = None
+        if cfg.internal_coordinate_head_enabled:
+            self.internal_coordinate_head = nn.Sequential(
+                nn.LayerNorm(cfg.hidden_dim),
+                nn.Linear(cfg.hidden_dim, cfg.hidden_dim),
+                nn.GELU(),
+                nn.Dropout(cfg.dropout),
+                nn.Linear(cfg.hidden_dim, 2),
             )
         self.lm_head.weight = self.token_embed.weight
         if cfg.lora_rank > 0:
@@ -414,6 +426,14 @@ class RandomOrderTokenGT(nn.Module):
                         coordinate_mask=coordinate_mask,
                     )
                 )
+        if self.internal_coordinate_head is not None:
+            internal_params = self.internal_coordinate_head(hidden)
+            output["internal_coordinate_params"] = internal_params
+            output["internal_coordinate_mean"] = torch.pi * torch.tanh(internal_params[..., 0])
+            output["internal_coordinate_logvar"] = internal_params[..., 1].clamp(
+                min=float(self.cfg.internal_coordinate_logvar_min),
+                max=float(self.cfg.internal_coordinate_logvar_max),
+            )
         attention_metrics = getattr(self.encoder, "last_attention_metrics", None)
         if attention_metrics:
             output["attention_metrics"] = attention_metrics

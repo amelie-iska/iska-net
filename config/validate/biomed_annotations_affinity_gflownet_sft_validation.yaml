@@ -1,0 +1,8 @@
+gflownet_validation:
+  checkpoint: outputs/biomed_annotations_affinity_gflownet_sft_4090/gflownet_final.pt
+  data_path: data/processed/biomed_annotations_affinity/val.jsonl
+  output: outputs/biomed_annotations_affinity_gflownet_sft_4090/validation.json
+  batch_size: 8
+  max_traj_steps: 12
+  epsilon: 0.0
+  device: cuda

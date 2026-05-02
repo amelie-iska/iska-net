@@ -57,6 +57,24 @@ COMMON_ATOMIC_NUMBERS = {
     "I": 53,
 }
 PROTEIN_BACKBONE_SYMBOLS = ("N", "C", "C", "O")
+INTERNAL_COORD_TYPES = [
+    "protein_phi",
+    "protein_psi",
+    "protein_omega",
+    "sidechain_chi",
+    "rna_alpha",
+    "rna_beta",
+    "rna_gamma",
+    "rna_delta",
+    "rna_epsilon",
+    "rna_zeta",
+    "glycosidic_chi",
+    "sugar_pucker",
+    "ligand_torsion",
+]
+INTERNAL_COORD_TYPE_TO_ID = {name: idx + 1 for idx, name in enumerate(INTERNAL_COORD_TYPES)}
+PROTEIN_INTERNAL_COORD_TYPES = ("protein_phi", "protein_psi", "protein_omega", "sidechain_chi")
+NUCLEIC_INTERNAL_COORD_TYPES = ("rna_alpha", "rna_beta", "rna_gamma", "rna_delta", "rna_epsilon", "rna_zeta", "glycosidic_chi", "sugar_pucker")
 
 
 def _float_or_none(value: Any) -> float | None:
@@ -267,6 +285,32 @@ def uma_coordinate_symbols(example: GraphExample, max_atoms: int) -> list[str]:
         return []
 
 
+def internal_coordinate_actions(example: GraphExample, max_actions: int) -> list[dict[str, Any]]:
+    """Derive internal-coordinate action slots from symbolic graph records only."""
+    if max_actions <= 0:
+        return []
+    actions: list[dict[str, Any]] = []
+    residues = [node for node in example.nodes if node.type == "amino_acid"]
+    bases = [node for node in example.nodes if node.type in {"rna_base", "dna_base"}]
+    ligand_tokens = [node for node in example.nodes if node.type in {"selfies_token", "atom", "smiles_char"}]
+
+    for residue_idx, _node in enumerate(residues):
+        for coord_type in PROTEIN_INTERNAL_COORD_TYPES:
+            actions.append({"type": coord_type, "residue_index": residue_idx, "component": "protein"})
+            if len(actions) >= max_actions:
+                return actions
+    for base_idx, node in enumerate(bases):
+        component = "rna" if node.type == "rna_base" else "dna"
+        for coord_type in NUCLEIC_INTERNAL_COORD_TYPES:
+            actions.append({"type": coord_type, "residue_index": base_idx, "component": component})
+            if len(actions) >= max_actions:
+                return actions
+    torsion_count = max(0, min(len(ligand_tokens) - 1, max_actions - len(actions)))
+    for torsion_idx in range(torsion_count):
+        actions.append({"type": "ligand_torsion", "residue_index": torsion_idx, "component": "ligand"})
+    return actions[:max_actions]
+
+
 def extract_numeric_values(example: GraphExample, max_values: int) -> tuple[list[float], list[float]]:
     values: list[float] = []
     if max_values <= 0:
@@ -303,6 +347,10 @@ class EncodedExample:
     coordinate_mask: list[list[float]]
     uma_coordinate_query_mask: list[float]
     uma_coordinate_symbols: list[str]
+    internal_coordinate_query_mask: list[float]
+    internal_coordinate_type_ids: list[int]
+    internal_coordinate_residue_indices: list[int]
+    internal_coordinate_types: list[str]
     slot_ids: list[int]
     labels: list[int]
     task: str
@@ -463,16 +511,21 @@ def encode_example(
     max_target_tokens: int,
     max_seq_len: int | None = None,
     max_uma_coordinate_atoms: int = 0,
+    max_internal_coordinate_actions: int = 0,
 ) -> EncodedExample:
     source_tokens, source_kinds, endpoints, identifiers = graph_source_tokens(example)
     source_numeric_features = graph_source_numeric_features(example)
     query_symbols = uma_coordinate_symbols(example, max_uma_coordinate_atoms)
+    internal_actions = internal_coordinate_actions(example, max_internal_coordinate_actions)
     if max_seq_len is not None:
         target_count = min(len(order), max_target_tokens)
         reserved = 1 + 2 * target_count
-        query_budget = min(len(query_symbols), max(0, max_seq_len - reserved - 1))
-        source_budget = max(1, min(max_source_tokens, max_seq_len - reserved - query_budget))
-        query_symbols = query_symbols[:query_budget]
+        query_budget = max(0, max_seq_len - reserved - 1)
+        internal_budget = min(len(internal_actions), query_budget)
+        coord_budget = min(len(query_symbols), max(0, query_budget - internal_budget))
+        source_budget = max(1, min(max_source_tokens, max_seq_len - reserved - internal_budget - coord_budget))
+        internal_actions = internal_actions[:internal_budget]
+        query_symbols = query_symbols[:coord_budget]
     else:
         source_budget = max_source_tokens
     source_tokens = source_tokens[:source_budget]
@@ -490,8 +543,30 @@ def encode_example(
     coordinate_targets = [[0.0, 0.0, 0.0] for _ in token_ids]
     coordinate_mask = [[0.0, 0.0, 0.0] for _ in token_ids]
     uma_coordinate_query_mask = [0.0 for _ in token_ids]
+    internal_coordinate_query_mask = [0.0 for _ in token_ids]
+    internal_coordinate_type_ids = [0 for _ in token_ids]
+    internal_coordinate_residue_indices = [-1 for _ in token_ids]
     slot_ids = [0 for _ in token_ids]
     labels = [-100 for _ in token_ids]
+
+    internal_count = max(1, len(internal_actions))
+    for action_idx, action in enumerate(internal_actions):
+        coord_type = str(action["type"])
+        type_id = INTERNAL_COORD_TYPE_TO_ID.get(coord_type, 0)
+        residue_index = int(action.get("residue_index", -1))
+        token_ids.append(vocab.encode(f"INTERNAL_COORD_QUERY:{coord_type}"))
+        kind_ids.append(KIND_TO_ID["special"])
+        endpoint_ids.append((0, 0))
+        identifier_ids.append(0)
+        numeric_features.append([2.0, action_idx / internal_count, type_id / 32.0, max(0, residue_index) / 512.0])
+        coordinate_targets.append([0.0, 0.0, 0.0])
+        coordinate_mask.append([0.0, 0.0, 0.0])
+        uma_coordinate_query_mask.append(0.0)
+        internal_coordinate_query_mask.append(1.0)
+        internal_coordinate_type_ids.append(type_id)
+        internal_coordinate_residue_indices.append(residue_index)
+        slot_ids.append(min(action_idx + 1, max_target_tokens))
+        labels.append(-100)
 
     query_count = max(1, len(query_symbols))
     for atom_idx, symbol in enumerate(query_symbols):
@@ -504,6 +579,9 @@ def encode_example(
         coordinate_targets.append([0.0, 0.0, 0.0])
         coordinate_mask.append([0.0, 0.0, 0.0])
         uma_coordinate_query_mask.append(1.0)
+        internal_coordinate_query_mask.append(0.0)
+        internal_coordinate_type_ids.append(0)
+        internal_coordinate_residue_indices.append(-1)
         slot_ids.append(min(atom_idx + 1, max_target_tokens))
         labels.append(-100)
 
@@ -515,6 +593,9 @@ def encode_example(
     coordinate_targets.append([0.0, 0.0, 0.0])
     coordinate_mask.append([0.0, 0.0, 0.0])
     uma_coordinate_query_mask.append(0.0)
+    internal_coordinate_query_mask.append(0.0)
+    internal_coordinate_type_ids.append(0)
+    internal_coordinate_residue_indices.append(-1)
     slot_ids.append(0)
     labels.append(-100)
 
@@ -528,6 +609,9 @@ def encode_example(
         coordinate_targets.append(per_target_coords[target_idx])
         coordinate_mask.append(per_target_coord_mask[target_idx])
         uma_coordinate_query_mask.append(0.0)
+        internal_coordinate_query_mask.append(0.0)
+        internal_coordinate_type_ids.append(0)
+        internal_coordinate_residue_indices.append(-1)
         slot_ids.append(min(target_idx + 1, max_target_tokens))
         labels.append(vocab.encode(token))
 
@@ -539,6 +623,9 @@ def encode_example(
         coordinate_targets.append([0.0, 0.0, 0.0])
         coordinate_mask.append([0.0, 0.0, 0.0])
         uma_coordinate_query_mask.append(0.0)
+        internal_coordinate_query_mask.append(0.0)
+        internal_coordinate_type_ids.append(0)
+        internal_coordinate_residue_indices.append(-1)
         slot_ids.append(min(target_idx + 1, max_target_tokens))
         labels.append(-100)
 
@@ -552,6 +639,10 @@ def encode_example(
         coordinate_mask=coordinate_mask,
         uma_coordinate_query_mask=uma_coordinate_query_mask,
         uma_coordinate_symbols=query_symbols,
+        internal_coordinate_query_mask=internal_coordinate_query_mask,
+        internal_coordinate_type_ids=internal_coordinate_type_ids,
+        internal_coordinate_residue_indices=internal_coordinate_residue_indices,
+        internal_coordinate_types=[str(action["type"]) for action in internal_actions],
         slot_ids=slot_ids,
         labels=labels,
         task=example.task,
@@ -568,6 +659,7 @@ class RandomOrderCollator:
         max_seq_len: int = 256,
         max_numeric_targets: int = 0,
         max_uma_coordinate_atoms: int = 0,
+        max_internal_coordinate_actions: int = 0,
         order_mode: str = "sample",
         seed: int = 17,
     ):
@@ -577,6 +669,7 @@ class RandomOrderCollator:
         self.max_seq_len = max_seq_len
         self.max_numeric_targets = max_numeric_targets
         self.max_uma_coordinate_atoms = max_uma_coordinate_atoms
+        self.max_internal_coordinate_actions = max_internal_coordinate_actions
         self.order_mode = order_mode
         self.rng = random.Random(seed)
 
@@ -590,6 +683,7 @@ class RandomOrderCollator:
                 self.max_target_tokens,
                 self.max_seq_len,
                 self.max_uma_coordinate_atoms,
+                self.max_internal_coordinate_actions,
             )
             for ex in examples
         ]
@@ -605,6 +699,9 @@ class RandomOrderCollator:
         coordinate_targets = torch.zeros((batch, seq_len, 3), dtype=torch.float32)
         coordinate_mask = torch.zeros((batch, seq_len, 3), dtype=torch.float32)
         uma_coordinate_query_mask = torch.zeros((batch, seq_len), dtype=torch.float32)
+        internal_coordinate_query_mask = torch.zeros((batch, seq_len), dtype=torch.float32)
+        internal_coordinate_type_ids = torch.zeros((batch, seq_len), dtype=torch.long)
+        internal_coordinate_residue_indices = torch.full((batch, seq_len), -1, dtype=torch.long)
         labels = torch.full((batch, seq_len), -100, dtype=torch.long)
         attention_mask = torch.zeros((batch, seq_len), dtype=torch.bool)
         topology_features = topology_feature_tensor(examples)
@@ -622,6 +719,9 @@ class RandomOrderCollator:
             coordinate_targets[row, :n] = torch.tensor(ex.coordinate_targets[:n], dtype=torch.float32)
             coordinate_mask[row, :n] = torch.tensor(ex.coordinate_mask[:n], dtype=torch.float32)
             uma_coordinate_query_mask[row, :n] = torch.tensor(ex.uma_coordinate_query_mask[:n], dtype=torch.float32)
+            internal_coordinate_query_mask[row, :n] = torch.tensor(ex.internal_coordinate_query_mask[:n], dtype=torch.float32)
+            internal_coordinate_type_ids[row, :n] = torch.tensor(ex.internal_coordinate_type_ids[:n], dtype=torch.long)
+            internal_coordinate_residue_indices[row, :n] = torch.tensor(ex.internal_coordinate_residue_indices[:n], dtype=torch.long)
             labels[row, :n] = torch.tensor(ex.labels[:n], dtype=torch.long)
             attention_mask[row, :n] = True
             values, value_mask = extract_numeric_values(examples[row], self.max_numeric_targets)
@@ -641,6 +741,9 @@ class RandomOrderCollator:
             "coordinate_targets": coordinate_targets,
             "coordinate_mask": coordinate_mask,
             "uma_coordinate_query_mask": uma_coordinate_query_mask,
+            "internal_coordinate_query_mask": internal_coordinate_query_mask,
+            "internal_coordinate_type_ids": internal_coordinate_type_ids,
+            "internal_coordinate_residue_indices": internal_coordinate_residue_indices,
             "labels": labels,
             "attention_mask": attention_mask,
             "causal_mask": causal_mask,
@@ -650,5 +753,6 @@ class RandomOrderCollator:
             "tasks": [ex.task for ex in examples],
             "example_ids": [ex.id for ex in examples],
             "uma_coordinate_symbols": [ex.uma_coordinate_symbols for ex in encoded],
+            "internal_coordinate_types": [ex.internal_coordinate_types for ex in encoded],
             "examples": examples,
         }

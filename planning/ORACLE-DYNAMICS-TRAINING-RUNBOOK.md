@@ -1,0 +1,176 @@
+# UGM Oracle-Dynamics Training Runbook
+
+This runbook is the executable overview for the addendum path in `assets/main.tex`: BioSELFIES or native sequence/string inputs, optional hybrid FlashAttention/MHTA contact maps, UMA/FairChem coordinate-force feedback, and optional contact-map/embedding-geometry alignment. The strict training boundary remains unchanged: the policy does not train from PDB/mmCIF/SDF coordinates, conformer libraries, MD frames, structure-token labels, or direct supervised energy/force labels.
+
+## Fast Commands
+
+Use the full preflight wrapper when you want readiness checks, UMA-weight verification, integrity checks, policy scan, training, validation, test, inference, and phase-2 stages:
+
+```bash
+./scripts/run_full_phase1_phase2_training_250m_oracle_dynamics.sh
+```
+
+Use the direct wrapper when the corpus, 250M vocab, context config, FairChem repo, and UMA weights are already present:
+
+```bash
+./scripts/train_full_selected_250m_oracle_dynamics_direct.sh
+```
+
+The direct wrapper is the fastest route to training. It defaults to:
+
+- `ENABLE_TROPICAL_ATTENTION=1`
+- `ENABLE_UMA_COORDINATE_HEAD=1`
+- `ENABLE_UMA_INTERNAL_COORDINATES=1`
+- `EXTRA_TRAIN_CONFIGS+=config/train/overrides/uma_contact_geometry_loss.yaml`
+- `EXTRA_TRAIN_CONFIGS+=config/train/overrides/uma_internal_coordinates.yaml`
+- `SKIP_POLICY_CHECK=1`
+- `FULL_TRAIN_BATCH_SIZE=1`
+- `FULL_TRAIN_EVAL_BATCH_SIZE=1`
+- `FULL_TRAIN_GRAD_ACCUM=36`
+
+The micro-batch default is conservative for a 24GB RTX 4090 because it combines the hybrid Flash/MHTA backend, continuous coordinate readout, UMA-force surrogate, and contact-map geometry loss. If memory is stable, try:
+
+```bash
+FULL_TRAIN_BATCH_SIZE=2 FULL_TRAIN_EVAL_BATCH_SIZE=2 FULL_TRAIN_GRAD_ACCUM=18 \
+./scripts/train_full_selected_250m_oracle_dynamics_direct.sh
+```
+
+For a 20-step smoke run:
+
+```bash
+FULL_TRAIN_MAX_STEPS=20 ./scripts/train_full_selected_250m_oracle_dynamics_direct.sh
+```
+
+For a dry run that prints the resolved override without launching training:
+
+```bash
+DRY_RUN=1 ./scripts/train_full_selected_250m_oracle_dynamics_direct.sh
+```
+
+## Manual Equivalent
+
+The direct wrapper resolves to this config stack:
+
+```bash
+conda run --no-capture-output -n tokengt python scripts/train_stage.py \
+  --config config/model/ugm_250m_tokengt.yaml \
+  --config config/data/real_full_selected_mix_250m.yaml \
+  --config config/generated/real_full_selected_context_compact.yaml \
+  --config config/train/real_full_selected_250m_local.yaml \
+  --config logs/direct_training/<RUN_ID>/direct_250m_training_override.yaml \
+  --config config/model/overrides/hybrid_flash_mhta_backend.yaml \
+  --config config/train/overrides/uma_contact_geometry_loss.yaml \
+  --config config/train/overrides/uma_internal_coordinates.yaml \
+  --config config/train/overrides/uma_coordinate_head.yaml \
+  --config config/train/overrides/wandb_online.yaml
+```
+
+The order matters: model/data/train base configs first, run-local batch/epoch override next, backend and loss overrides after that, and W&B last.
+
+## Function Readiness List
+
+| Surface | Function or file | Training role | Status |
+|---|---|---|---|
+| BioSELFIES tokenization | `tokenize_bioselfies` | Bracket-token parsing with total fallback | ready |
+| BioSELFIES serialization | `bioselfies_from_modalities` | Converts non-structural protein/DNA/RNA/SELFIES fields into strict symbolic input | ready |
+| BioSELFIES vocab | `reference_bioselfies_tokens` | Adds BioSELFIES, hybrid patch, H-bond, and torsion records to reference vocabulary | ready |
+| BioSELFIES graph | `add_bioselfies_graph` | Produces typed graph nodes/edges without structure labels | ready |
+| Multimodal graphification | `graphify_multimodal` | Accepts `bioselfies`, `bio_selfies`, `BioSELFIES`, `input_representation: bioselfies`, and `bioselfies_only` | ready |
+| Generic graphification | `graphify_rows` | Routes BioSELFIES rows into multimodal graphification | ready |
+| Sequence-only gate | `graph_structure_violations` | Allows BioSELFIES string molecule anchors while rejecting direct structure labels | ready |
+| UMA query batching | `RandomOrderCollator` | Emits `UMA_COORD_QUERY:*` slots from symbolic records | ready |
+| Coordinate readout | `RandomOrderTokenGT.coordinate_head` | Generates continuous coordinate proposals from hidden graph-of-thought state | ready |
+| UMA force surrogate | `uma_coordinate_head_oracle_loss` | Scores generated coordinates with FairChem/UMA and backpropagates detached-force surrogate | ready |
+| Internal-coordinate slots | `internal_coordinate_actions` and `RandomOrderCollator` | Emits `INTERNAL_COORD_QUERY:*` slots from symbolic sequence records | ready |
+| Internal-coordinate readout | `RandomOrderTokenGT.internal_coordinate_head` | Generates torsion-like actions for protein, nucleic-acid, and ligand geometry | ready |
+| Internal-coordinate UMA feedback | `uma_internal_coordinate_head_oracle_loss` | Builds generated coarse geometries from model actions and scores them with UMA forces | ready |
+| Contact-map coupling | `uma_contact_alignment_loss` | Aligns emitted contact maps and embedding geometry with UMA-stage feedback records | ready |
+| SFT GFlowNet | `config/train/gflownet_sft_4090.yaml` | Learns broad symbolic graph completions for function/annotation/assay rows | ready |
+| Structure-dynamics GFlowNet | `config/train/structure_dynamics_gflownet_4090.yaml` | Learns oracle/contact/internal-coordinate/adaptive-patch graph construction | ready |
+| UniProt features | `graphify_protein_ec` and `_add_uniprot_annotations` | Adds symbolic binding-site, active-site, cofactor, domain, GO, keyword, and PTM records | ready |
+| Complex affinity | `graphify_biomolecular_complex_affinity` | Adds protein/protein, protein/nucleic-acid, protein/ligand, and arbitrary component affinity rows | ready |
+| Training loop | `run_training_stage` | Combines token loss, UMA coordinate loss, contact loss, tqdm, JSONL metrics, checkpoints, W&B | ready |
+| Direct wrapper | `scripts/train_full_selected_250m_oracle_dynamics_direct.sh` | Jumps straight to phase-1 training with all oracle-dynamics overrides | ready |
+| Full wrapper | `scripts/run_full_phase1_phase2_training_250m_oracle_dynamics.sh` | Runs preflight/readiness plus full phase-1/phase-2 path | ready |
+
+## W&B Metrics To Watch
+
+- `train/loss`, `train/token_loss`, `train/acc`
+- `uma_coordinate/*`
+- `uma_internal/*`
+- `uma_contact/*`
+- `folding_contact/*`
+- `hybrid_attention/*`
+- `tropical_attention/*`
+- `flash_attention/*`
+- `train/samples_per_sec`, `train/tokens_per_sec`, if present in the run
+
+## Related Data And GFlowNet Commands
+
+Prepare UniProt feature and binding-site exports:
+
+```bash
+conda run -n tokengt python scripts/prepare_science_sources.py \
+  --kind uniprot_features \
+  --input /path/to/uniprot_features.tsv \
+  --dataset-name uniprot_features_local_export \
+  --output data/processed/uniprot_features_local_export/all.jsonl
+```
+
+Prepare biomolecular-complex affinity rows:
+
+```bash
+conda run -n tokengt python scripts/prepare_science_sources.py \
+  --kind biomolecular_affinity \
+  --input /path/to/complex_affinity.tsv \
+  --dataset-name biomolecular_complex_affinity_local \
+  --output data/processed/biomolecular_complex_affinity_local/all.jsonl
+```
+
+Curate those local exports and jump directly to the 250M training stack:
+
+```bash
+UNIPROT_FEATURES_INPUTS="/path/to/uniprot_features.tsv" \
+AFFINITY_INPUTS="/path/to/complex_affinity.tsv" \
+TRAIN_PHASES=all \
+./scripts/train_biomed_annotations_affinity_direct.sh
+```
+
+The wrapper writes/uses `data/processed/biomed_annotations_affinity/{train,val,test}.jsonl`, checks integrity, and then dispatches:
+
+- `config/model/ugm_250m_tokengt.yaml`
+- `config/data/biomed_annotations_affinity_250m.yaml`
+- `config/train/biomed_annotations_affinity_250m.yaml`
+- `config/train/biomed_annotations_affinity_gflownet_sft_4090.yaml`
+- `config/train/biomed_annotations_affinity_structure_dynamics_gflownet_4090.yaml`
+
+Set `TRAIN_PHASES=sft`, `TRAIN_PHASES=gflownet_sft`, or `TRAIN_PHASES=structure_dynamics_gflownet` to run only one stage.
+
+Train the SFT GFlowNet and the structure-dynamics GFlowNet separately:
+
+```bash
+conda run -n tokengt python scripts/train_stage.py \
+  --config config/data/multimodal_graphs_4090.yaml \
+  --config config/train/gflownet_sft_4090.yaml
+
+conda run -n tokengt python scripts/train_stage.py \
+  --config config/data/multimodal_graphs_4090.yaml \
+  --config config/train/structure_dynamics_gflownet_4090.yaml
+```
+
+## Preconditions
+
+Before the direct wrapper, this should already be true:
+
+```bash
+test -s outputs/real_full_selected_250m_local/vocab.jsonl
+test -s data/processed/real_full_selected_mix/train.jsonl
+test -d data/external_repos/fairchem
+conda run --no-capture-output -n tokengt python scripts/download_uma_weights.py \
+  --repo data/external_repos/fairchem \
+  --model-name uma-s-1p2 \
+  --task-name omol \
+  --device cuda
+```
+
+If those checks have not been run recently, use the full preflight wrapper instead of the direct wrapper.

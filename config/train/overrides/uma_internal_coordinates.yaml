@@ -1,0 +1,33 @@
+model:
+  internal_coordinate_head_enabled: true
+  internal_coordinate_logvar_min: -8.0
+  internal_coordinate_logvar_max: 4.0
+
+data:
+  # Adds source-side INTERNAL_COORD_QUERY:* action slots derived from symbolic
+  # protein/RNA/DNA/SELFIES records. These are torsion-like action carriers for
+  # UMA feedback and do not read structure labels.
+  max_internal_coordinate_actions: 64
+
+loss:
+  # Internal-coordinate actions are trained from UMA force feedback on generated
+  # coarse scaffolds. This keeps the main structure-dynamics path autoregressive
+  # and oracle-supervised rather than coordinate-supervised.
+  uma_internal_coordinate_oracle_weight: 0.02
+  uma_internal_coordinate_oracle_backend: fairchem
+  uma_internal_coordinate_oracle_every: 16
+  uma_internal_coordinate_max_examples: 1
+  uma_internal_coordinate_max_actions: 64
+  uma_internal_coordinate_max_residues: 4
+  uma_internal_coordinate_max_atoms: 16
+  uma_internal_coordinate_force_clip: 5.0
+  uma_internal_coordinate_center_weight: 0.001
+  uma_internal_coordinate_repulsion_weight: 0.01
+  uma_internal_coordinate_min_distance: 0.75
+  uma_internal_coordinate_dynamics_steps: 2
+  uma_internal_coordinate_force_step_size: 0.02
+  uma_internal_coordinate_repo: data/external_repos/fairchem
+  uma_internal_coordinate_model_name: uma-s-1p2
+  uma_internal_coordinate_task_name: omol
+  uma_internal_coordinate_device: cuda
+  uma_internal_coordinate_strict: false

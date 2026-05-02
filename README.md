@@ -3,6 +3,7 @@
 <img src="./assets/UGM-1.png" alt="Universal Graph Model" width="900">
 
 [![Paper PDF](https://img.shields.io/badge/Paper-link%20PDF-1f6feb?style=for-the-badge&logo=arxiv&logoColor=white)](./assets/human_learning_transformer_learning_review_dataset_expanded.pdf)
+[![Dynamics Addendum](https://img.shields.io/badge/Addendum-oracle%20dynamics-1f6feb?style=for-the-badge&logo=arxiv&logoColor=white)](./assets/main.pdf)
 
 This repo is a training scaffold for the **Universal Graph Model (UGM)**: a clopen-style model that is open to graph-structured information across modalities while seeking closure under a universal architecture. The central goal is that the broadly optimized transformer substrate can become a standardized graph reasoner through a simple tokenization and positional/identifier encoding of both vertices and edges, without requiring specialized graph attention for every domain. That same graph-token interface also makes the ideas in [Tropical Quivers of Archs](https://github.com/amelie-iska/Tropical_Quivers_of_Archs) and the NeurIPS 2025 [Tropical Attention](https://github.com/amelie-iska/Tropical-Attention) implementation natural to standardize: complex directed model graphs can be composed at the continuous embedding-space level rather than only through discrete token streams. UGM is therefore a TokenGT-style graph-to-graph model type for language, reasoning, tools, SELFIES/SMILES molecules, proteins, DNA/RNA, graph-state reasoning, temperature-conditioned UMA-oracle feedback, GFlowNet training, graph/tree/chain-of-thought supervision, continuous latent reasoning, optional Tropical Attention, and persistent-topology/tropical-geometry diagnostics.
 
@@ -43,6 +44,11 @@ The implemented path is intentionally practical for one RTX 4090: graph-rich exa
 - PLAN-E Hebrew morphology/root slices with UD Hebrew HTB, Hebrew QA, Nakdimon diacritization, root-template graphs, and root-extension GFlowNet training.
 - PLAN-F/PLAN-G deferred-component closure: optional advanced topology backends, tropical attention/parser utilities, autoregressive coordinate/property graph tokens plus a gated continuous coordinate head, audio feature extraction, local SFM/NatureLM and UniGenX science-source preparation, bioactivity/docking/protein graphification, safer verifier execution, stronger curation, and context-aware learned-backward GFlowNets.
 - PLAN-H UGM multimodal graph-to-graph phase: sequence-first vocabulary for text/protein/SELFIES/SMILES/DNA/RNA/tool/oracle records, local-source preparation, continuous temperature conditioning, UMA-conditioned coupling/motion bins, function-description alignment, and oracle-feedback GFlowNet rewards.
+- BioSELFIES-style symbolic graphification for the oracle-dynamics addendum: `bioselfies`, `bio_selfies`, or `input_representation: bioselfies` rows decode into typed protein/DNA/RNA/SELFIES/atom/link/modification/patch/H-bond/torsion/thought graph records. The decoder is total, so unsupported tokens become explicit `bioselfies_unknown` nodes rather than parser failures. This is a symbolic interface only; it does not introduce coordinates, distance labels, force labels, energy labels, PDB/mmCIF/SDF files, conformer libraries, or MD trajectories.
+- Internal-coordinate action slots for structure-dynamics training: symbolic protein/RNA/DNA/SELFIES rows can create `INTERNAL_COORD_QUERY:*` source slots, and the model emits torsion-like actions such as `protein_phi`, `protein_psi`, `protein_omega`, side-chain chi, nucleic-acid torsions, sugar pucker, and ligand torsion. These actions are trained through UMA-scored generated coarse geometries, not copied structure labels.
+- Separate GFlowNet tracks for SFT and structure-dynamics: `gflownet.mode: sft` learns diverse symbolic graph completions, while `gflownet.mode: structure_dynamics` filters candidates to internal-coordinate, contact-patch, adaptive-patch, temperature, token-motion, and UMA/oracle records.
+- UniProt feature and binding-site graphification: local UniProt TSV/CSV/JSON/JSONL exports can add accessions, names, organism/taxon, GO, keywords, EC, domains, PTMs, variants, cofactors, catalytic activity, subcellular location, subunit text, binding sites, active sites, metal-binding sites, DNA-binding sites, and other sequence features.
+- Biomolecular-complex affinity graphification: local rows for protein-protein, protein-RNA, protein-DNA, protein-ligand, ligand-nucleic-acid, antibody-antigen, receptor-ligand, or arbitrary component complexes can carry `Kd`, `Ki`, `IC50`, `kon`, `koff`, or `dG`-style values with units, temperature, pH, buffer, and assay metadata.
 - Full motif vocabulary path for sequence-first multimodal training: PROSITE, InterPro, Rfam, core sequence motifs, safe `SEQ_MOTIF_FROM_STRUCTURE:*` vocabulary entries, and optional non-structure molecule descriptors are parsed into graph-record vocabulary tokens; row-local structure motifs from coordinates/contact labels are evaluation/future-phase only.
 - Structure/dynamics sources are validation-only by default. Actual PDB/mmCIF/SDF/trajectory coordinate labels, energy labels, and force labels remain disabled. The active coordinate path uses model-generated coordinates scored by UMA as an online oracle.
 - Verifier-aware GFlowNet graph-of-thought trajectory-balance trainer plus rollout validation.
@@ -153,6 +159,7 @@ MAX_GRAPH_TOKENS=4500000000 scripts/run_full_phase1_phase2_training.sh
 WANDB_MODE=offline scripts/run_full_phase1_phase2_training.sh
 WANDB_ENABLED=0 scripts/run_full_phase1_phase2_training.sh
 UMA_SCORE_SMOKE=1 scripts/run_full_phase1_phase2_training.sh
+ENABLE_UMA_INTERNAL_COORDINATES=1 ./scripts/run_full_phase1_phase2_training_250m_oracle_dynamics.sh
 FULL_TRAIN_EPOCHS=2.0 scripts/run_full_phase1_phase2_training.sh
 FULL_TRAIN_EVAL_MAX_BATCHES=full scripts/run_full_phase1_phase2_training.sh
 FULL_TRAIN_NUM_WORKERS=12 FULL_TRAIN_PREFETCH_FACTOR=6 scripts/run_full_phase1_phase2_training.sh
@@ -163,6 +170,8 @@ ENABLE_TROPICAL_ATTENTION=1 FULL_TRAIN_BATCH_SIZE=2 FULL_TRAIN_GRAD_ACCUM=18 ./s
 FULL_TRAIN_MAX_STEPS=20 ./scripts/train_full_selected_250m_direct.sh
 ENABLE_TROPICAL_ATTENTION=1 FULL_TRAIN_MAX_STEPS=20 ./scripts/train_full_selected_250m_direct.sh
 ENABLE_TROPICAL_ATTENTION=1 ENABLE_UMA_COORDINATE_HEAD=1 FULL_TRAIN_MAX_STEPS=20 ./scripts/train_full_selected_250m_direct.sh
+./scripts/run_full_phase1_phase2_training_250m_oracle_dynamics.sh
+./scripts/train_full_selected_250m_oracle_dynamics_direct.sh
 MODEL_CONFIG=config/model/ugm_250m_tokengt.yaml scripts/run_full_phase1_phase2_training.sh
 TRAINING_FIRST=0 SKIP_INTERPRO_MOTIF_DOWNLOAD=0 scripts/run_full_phase1_phase2_training.sh
 ```
@@ -254,6 +263,8 @@ Function-description training is part of the first curriculum. Use SFM/NatureLM-
 UMA influences graph-state evolution through fine-grained binned records only in the UMA candidate-scoring stage. Ordinary sequence reconstruction and function-description rows may carry temperature and function nodes, but they do not emit AF-style 64-bin `ATTN_BIN:*`, `TOKEN_COUPLING:uma:*`, `UMA_INFLUENCE:uma:*`, `TOKEN_MOTION:uma:*`, `UMA_TRAJ_BIN:*`, or `SEQ_STRUCT_DYN_PROXY:*` targets unless an oracle stage flag or structure-dynamics task is active. In that stage, GFlowNet training learns temperature-conditioned coupling, motion, and trajectory policies from SELFIES/FASTA inputs only.
 
 The stage is still aimed at actual structure-dynamics generation. The model should propose typed atom/bond/coordinate/frame graph records; the restriction is that those predictions are trained through UMA/verifier/GFlowNet feedback rather than supervised copying of structure files, energy/force labels, or MD frames. Generated-token PDB rendering is optional and not required for this pass.
+
+The internal-coordinate path is the preferred structure-dynamics quality upgrade. Instead of making the coordinate head carry all geometry, the input collator adds source-side action slots such as `INTERNAL_COORD_QUERY:protein_phi`, `INTERNAL_COORD_QUERY:protein_psi`, `INTERNAL_COORD_QUERY:protein_omega`, side-chain chi, nucleic-acid torsions, sugar pucker, and ligand torsion. The model reads those slots from the graph-of-thought embedding state, proposes torsion-like actions, builds a generated coarse geometry, and receives UMA energy/force feedback. This keeps the training autoregressive and oracle-supervised while making the geometry more physically structured than raw Cartesian slots alone.
 
 The coordinate head is a readout from embedding-space graph-of-thought state, not a replacement for it. UGM continues to learn graph reasoning through hidden thought states, graph-token autoregression, attention/contact fields, and verifier/oracle records. The UMA coordinate objective backpropagates through the coordinate readout into the same hidden embeddings and attention layers. With `uma_coordinate_dynamics_steps > 1`, each reasoning iteration is treated like a short physical-time step: the current generated coordinates are scored by UMA at the graph's continuous temperature, detached UMA forces roll the candidate forward, and the next score is logged and trained against the same latent graph state. Low-temperature examples emphasize stabilization and refinement; high-temperature examples keep broader contact and coordinate support.
 
@@ -524,6 +535,13 @@ conda run -n tokengt python scripts/prepare_science_sources.py \
   --limit 1000
 
 conda run -n tokengt python scripts/prepare_science_sources.py \
+  --kind uniprot_features \
+  --input /path/to/uniprot_features.tsv \
+  --dataset-name uniprot_features_local_export \
+  --output data/processed/uniprot_features_local_export/all.jsonl \
+  --limit 100000
+
+conda run -n tokengt python scripts/prepare_science_sources.py \
   --kind bindingdb \
   --input /path/to/BindingDB.tsv \
   --output data/processed/local_bindingdb/train.jsonl \
@@ -533,7 +551,29 @@ conda run -n tokengt python scripts/prepare_science_sources.py \
   --kind pdbbind \
   --input /path/to/pdbbind_rows.jsonl \
   --output data/processed/local_pdbbind/train.jsonl
+
+conda run -n tokengt python scripts/prepare_science_sources.py \
+  --kind biomolecular_affinity \
+  --input /path/to/complex_affinity.tsv \
+  --dataset-name biomolecular_complex_affinity_local \
+  --output data/processed/biomolecular_complex_affinity_local/all.jsonl \
+  --limit 100000
 ```
+
+`--kind uniprot_features` accepts UniProt-style fields such as `Entry`, `Reviewed`, `Protein names`, `Gene Names`, `Organism`, `Organism ID`, `Sequence`, `EC number`, `Gene Ontology IDs`, `Keywords`, `Features`, `Binding site`, `Active site`, `Metal binding`, `DNA binding`, `Subcellular location [CC]`, `Cofactor`, `Catalytic activity`, and `Subunit structure`. The graphifier emits symbolic `UNIPROT:*` records and binding-site edges, not coordinates.
+
+`--kind biomolecular_affinity`, `complex_affinity`, `ppi_affinity`, and `protein_na_affinity` accept protein, RNA, DNA, ligand, antibody/antigen, receptor/ligand, or arbitrary `components` rows with affinity fields such as `Kd`, `Ki`, `IC50`, `kon`, `koff`, `delta_g`, or `dG`, plus units, temperature, pH, buffer, and assay metadata.
+
+To make those two local exports trainable as one corpus and jump directly into the 250M model path:
+
+```bash
+UNIPROT_FEATURES_INPUTS="/path/to/uniprot_features.tsv" \
+AFFINITY_INPUTS="/path/to/complex_affinity.tsv" \
+TRAIN_PHASES=all \
+./scripts/train_biomed_annotations_affinity_direct.sh
+```
+
+If the graphified files already exist at `data/processed/uniprot_features_local_export/all.jsonl` and `data/processed/biomolecular_complex_affinity_local/all.jsonl`, the same wrapper curates `data/processed/biomed_annotations_affinity/{train,val,test}.jsonl`, checks split integrity, and starts training. `TRAIN_PHASES=sft` trains only `config/train/biomed_annotations_affinity_250m.yaml`; `TRAIN_PHASES=gflownet_sft` or `TRAIN_PHASES=structure_dynamics_gflownet` run the corresponding GFlowNet configs.
 
 For sequence/function-description alignment, use the sequence-only kinds:
 
@@ -559,7 +599,7 @@ conda run -n tokengt python scripts/prepare_science_sources.py \
 
 Expected fields include `protein_sequence` or `sequence`, plus `function_description`, `function`, `description`, `annotation`, `summary`, `completion`, or `output`.
 
-Supported `--kind` values include `pubchem`, `uniprot`, `refseq`, `ncbi`, `materials_project`, `chembl`, `bindingdb`, `bioactivity`, `pdbbind`, `docking`, and `ec`. These create graph-token rows for molecules, proteins, EC-number conditioning, protein-ligand docking, assay/bioactivity records, and materials.
+Supported `--kind` values include `pubchem`, `uniprot`, `uniprot_features`, `refseq`, `ncbi`, `materials_project`, `chembl`, `bindingdb`, `bioactivity`, `pdbbind`, `docking`, `complex_affinity`, `biomolecular_affinity`, `ppi_affinity`, `protein_na_affinity`, and `ec`. These create graph-token rows for molecules, proteins, UniProt sequence features, EC-number conditioning, protein-ligand docking, complex affinity, assay/bioactivity records, and materials.
 
 Local audio feature extraction remains available for user-provided rows with `local_audio_path` or `audio_path`, but no external audio corpus is part of the active SFM/NatureLM or UniGenX pipeline.
 
@@ -705,6 +745,36 @@ SKIP_POLICY_CHECK=1 \
 ./scripts/train_full_selected_250m_direct.sh
 ```
 
+Most complete strict oracle-dynamics command, with hybrid Flash/MHTA, UMA coordinate-force feedback, and contact-map/embedding-geometry alignment enabled:
+
+```bash
+./scripts/train_full_selected_250m_oracle_dynamics_direct.sh
+```
+
+Direct UniProt plus biomolecular-affinity training, with local preparation/curation included when `UNIPROT_FEATURES_INPUTS` or `AFFINITY_INPUTS` are set:
+
+```bash
+UNIPROT_FEATURES_INPUTS="/path/to/uniprot_features.tsv" \
+AFFINITY_INPUTS="/path/to/complex_affinity.tsv" \
+TRAIN_PHASES=all \
+./scripts/train_biomed_annotations_affinity_direct.sh
+```
+
+This uses `config/model/ugm_250m_tokengt.yaml`, `config/data/biomed_annotations_affinity_250m.yaml`, `config/train/biomed_annotations_affinity_250m.yaml`, `config/train/biomed_annotations_affinity_gflownet_sft_4090.yaml`, and `config/train/biomed_annotations_affinity_structure_dynamics_gflownet_4090.yaml`. It defaults to hybrid Flash/MHTA plus UMA coordinate and internal-coordinate heads.
+
+That wrapper defaults to `FULL_TRAIN_BATCH_SIZE=1`, `FULL_TRAIN_GRAD_ACCUM=36`, `ENABLE_TROPICAL_ATTENTION=1`, `ENABLE_UMA_COORDINATE_HEAD=1`, and `EXTRA_TRAIN_CONFIGS+=config/train/overrides/uma_contact_geometry_loss.yaml`. It is intentionally conservative for a 24GB RTX 4090. After a stable run, try:
+
+```bash
+FULL_TRAIN_BATCH_SIZE=2 FULL_TRAIN_EVAL_BATCH_SIZE=2 FULL_TRAIN_GRAD_ACCUM=18 \
+./scripts/train_full_selected_250m_oracle_dynamics_direct.sh
+```
+
+If you want the full readiness/integrity/policy/UMA preflight before training, use:
+
+```bash
+./scripts/run_full_phase1_phase2_training_250m_oracle_dynamics.sh
+```
+
 Code, Lean, and chemistry vertical-slice SFT smoke stages:
 
 ```bash
@@ -735,6 +805,8 @@ conda run -n tokengt python scripts/train_stage.py \
 
 UGM uses a single autoregressive graph-token decoder for symbolic and structure-candidate records. Generated frame coordinates are first discretized into identity-bearing target records such as `COORD:f0:a17:x:pos_near`, so frame, atom slot, axis, and coordinate bin are predicted through the same random-order `<POS>` objective as text, SELFIES, proof, tool, and oracle records. The optional continuous coordinate head is configured for UMA feedback rather than supervised structure labels: when `model.coordinate_head_enabled=true`, source-side `UMA_COORD_QUERY:*` slots receive continuous `(x,y,z)` proposals, and `loss.uma_coordinate_oracle_weight` trains those proposals from UMA energy/force feedback evaluated on the generated candidates. `loss.coordinate_loss_weight` remains `0.0` in the provided overrides, so no PDB/SDF/mmCIF/MD coordinate targets are used. The head is a geometry readout from embedding-space GoT reasoning; it does not replace random-order graph decoding.
 
+BioSELFIES-only rows are available for the strict symbolic-input ablation described in `assets/main.tex`. Set `input_representation: bioselfies` or `bioselfies_only: true` on raw multimodal rows; if no `bioselfies` string is supplied, graphification serializes non-structural `protein_sequence`, `dna_sequence`, `rna_sequence`, and `selfies` fields into bracketed BioSELFIES tokens. The resulting graph still feeds the same UMA coordinate-query path: amino-acid BioSELFIES components create residue nodes, and those residue nodes create coarse backbone `UMA_COORD_QUERY:N/C/C/O` slots for oracle-scored generated coordinates.
+
 UMA coordinate-head force-feedback override:
 
 ```bash
@@ -762,6 +834,20 @@ conda run -n tokengt python scripts/train_stage.py \
   --config config/data/multimodal_graphs_4090.yaml \
   --config config/train/multimodal_oracle_gflownet_4090.yaml
 ```
+
+Separate SFT and structure-dynamics GFlowNet stages:
+
+```bash
+conda run -n tokengt python scripts/train_stage.py \
+  --config config/data/multimodal_graphs_4090.yaml \
+  --config config/train/gflownet_sft_4090.yaml
+
+conda run -n tokengt python scripts/train_stage.py \
+  --config config/data/multimodal_graphs_4090.yaml \
+  --config config/train/structure_dynamics_gflownet_4090.yaml
+```
+
+The SFT GFlowNet keeps broad symbolic target-token candidates for function, tool, text, math, molecule, UniProt, and assay rows. The structure-dynamics GFlowNet narrows candidates to `INTERNAL_COORD:*`, `ADAPTIVE_PATCH:*`, `CONTACT_PATCH:*`, temperature, token-motion, and UMA/oracle records, so it trains graph-state construction for contact maps, adaptive patches, internal-coordinate proposals, and oracle-conditioned dynamics instead of generic text completion.
 
 Structure/dynamics graph-to-graph phase is disabled for the first run. Do not run these training configs unless a later explicit structure-file phase is approved; the active structure-dynamics proxy path is the sequence-only multimodal/GFlowNet stage above.
 
@@ -803,9 +889,11 @@ The ready-to-run 4090 configs are:
 config/train/science_sft_4090.yaml
 config/train/hebrew_sft_4090.yaml
 config/train/gflownet_got_4090.yaml
+config/train/gflownet_sft_4090.yaml
 config/train/hebrew_root_gflownet_4090.yaml
 config/train/multimodal_phase2_4090.yaml
 config/train/multimodal_oracle_gflownet_4090.yaml
+config/train/structure_dynamics_gflownet_4090.yaml
 config/train/structure_dynamics_4090.yaml                # disabled future-phase gate
 config/train/structure_dynamics_oracle_gflownet_4090.yaml # disabled future-phase gate
 ```
@@ -928,6 +1016,8 @@ conda run -n tokengt python scripts/validate_gflownet.py \
 
 GFlowNet configs now support:
 
+- `gflownet.mode: sft`: broad symbolic target-token graph completion;
+- `gflownet.mode: structure_dynamics`: oracle/contact/internal-coordinate/adaptive-patch target filtering;
 - `gflownet.use_context`: topology-conditioned policy inputs;
 - `gflownet.learn_backward_policy`: learned backward policy instead of uniform reverse actions;
 - `gflownet.subtrajectory_weight`: auxiliary subtrajectory-balance loss.
@@ -1031,6 +1121,7 @@ Current smoke coverage:
 - topology/tropical/verifier diagnostics;
 - curation dedup/split logic;
 - GFlowNet trajectory-balance backward pass.
+- SFT and structure-dynamics GFlowNet candidate filtering/reward paths.
 - code/Lean/chemistry domain adapters;
 - local LoRA plus checkpointing forward/backward.
 - SFM/NatureLM and UniGenX reference-token extraction plus science metrics.
@@ -1039,6 +1130,7 @@ Current smoke coverage:
 - PLAN-H UGM multimodal vocabulary, graphification, optional input-row PDB rendering, numeric extraction, oracle-feedback reward, and collator coverage.
 - Motif vocabulary parsing for PROSITE, InterPro, CATH, Rfam, local motif rows, and structure-derived sequence motifs from atom/frame rows.
 - UGM scientific/oracle random-order policies and multimodal inference/QA wiring.
+- UniProt feature/binding-site graphification, biomolecular-complex affinity graphification, internal-coordinate UMA action slots, and UMA internal-coordinate oracle proxy loss.
 - readiness probe for optional packages, Lean, CUDA, and reference data.
 
 ## Key Files
@@ -1048,6 +1140,9 @@ Current smoke coverage:
 - `planning/PLAN-D.md`: earlier science-data integration plan, superseded for NatureLM/UniGenX source correction by PLAN-G.
 - `planning/PLAN-G.md`: corrected SFM/NatureLM and UniGenX GitHub integration.
 - `planning/PLAN-H.md`: UGM multimodal graph-to-graph and oracle-feedback integration.
+- `planning/BIOMOLECULAR-ORACLE-DYNAMICS-PLAN.md`: implementation map for the BioSELFIES, sequence-only, UMA coordinate-force, contact-map, and GFlowNet approach in the addendum.
+- `planning/ORACLE-DYNAMICS-TRAINING-RUNBOOK.md`: concrete commands, config stack, W&B metrics, and function-readiness checklist for the addendum training path.
+- `planning/MULTIMODAL-BIO-LM-DATASET-UTILIZATION-PLAN.md`: LucaOne, ProTrek, BioT5+, OneProt, UniProt feature, and biomolecular-complex affinity data utilization plan.
 - `planning/TROPICAL-ATTENTION-INTEGRATION-PLAN.md`: source audit, mathematical contract, config toggles, hyperparameter guidance, metrics, risks, and validation criteria for optional MHTA training.
 - `planning/UGM-SYNTHETIC-FAUX-CODE-AUDIT.md`: first-party synthetic/proxy/faux-path inventory and replacement plan.
 - `planning/FULL-PRETRAINING-DATASET.md`: complete selected public pretraining corpus, token counts, per-dataset totals, and completeness boundary.
@@ -1060,6 +1155,7 @@ Current smoke coverage:
 - `planning/LICENSE-REVIEW.md`: dataset/source scale policy and provenance checklist.
 - `planning/RUNBOOK-4090.md`: 4090 training, validation, W&B, and inference runbook.
 - `planning/METRICS.md`: metric namespaces and meanings.
+- `assets/main.tex`: oracle-guided biomolecular dynamics addendum, including BioSELFIES/hybrid-tokenization and no-structure-training boundaries.
 - `src/iska_reasoner/models/random_order_tokengt.py`: model.
 - `src/iska_reasoner/data/dataset.py`: random-order collator.
 - `src/iska_reasoner/topology/`: graph topology and distogram-style summaries.

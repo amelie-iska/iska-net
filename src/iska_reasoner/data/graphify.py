@@ -83,6 +83,199 @@ def _motif_accession_source(value: Any, default_source: str) -> tuple[str, str, 
     return normalize_fragment(accession), normalize_fragment(source), str(name)
 
 
+def _first_text(row: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = row.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _record_items(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        if text.startswith(("[", "{")):
+            try:
+                parsed = json.loads(text)
+                return _record_items(parsed)
+            except Exception:
+                try:
+                    parsed = ast.literal_eval(text)
+                    return _record_items(parsed)
+                except Exception:
+                    pass
+        return [item for item in re.split(r"[;\n]\s*", text) if item]
+    return [value]
+
+
+def _record_text(value: Any, keys: tuple[str, ...] = ("description", "text", "value", "name", "id", "accession")) -> str:
+    if isinstance(value, dict):
+        return _first_text(value, keys)
+    return str(value).strip()
+
+
+def _normalize_measure(value: str, fallback: str = "affinity") -> str:
+    text = normalize_fragment(value or fallback)
+    aliases = {
+        "kd": "Kd",
+        "ki": "Ki",
+        "ic50": "IC50",
+        "ec50": "EC50",
+        "kon": "kon",
+        "koff": "koff",
+        "delta_g": "dG",
+        "dg": "dG",
+    }
+    return aliases.get(text.lower(), text or fallback)
+
+
+def _affinity_value(row: dict[str, Any]) -> tuple[str, str, str]:
+    measure = _first_text(row, ("affinity_type", "measure", "measurement", "standard_type", "type")) or "affinity"
+    for key in ("affinity", "binding_affinity", "Kd", "KD", "Ki", "KI", "IC50", "EC50", "kon", "koff", "delta_g", "dG", "standard_value"):
+        value = row.get(key)
+        if value is not None and str(value).strip():
+            if measure == "affinity" and key not in {"affinity", "binding_affinity", "standard_value"}:
+                measure = key
+            units = _first_text(row, ("affinity_units", "units", "standard_units", "Standard Units"))
+            return _normalize_measure(measure), str(value).strip(), units
+    return _normalize_measure(measure), "", _first_text(row, ("affinity_units", "units", "standard_units", "Standard Units"))
+
+
+def _add_uniprot_annotations(
+    nodes: list[Node],
+    edges: list[Edge],
+    row: dict[str, Any],
+    *,
+    protein_node: str = "protein",
+    function_node: str | None = None,
+) -> list[str]:
+    tokens: list[str] = []
+    accession = _first_text(row, ("accession", "Entry", "entry", "uniprot_id", "UniProtKB", "primaryAccession"))
+    if accession:
+        nodes.append(Node(id="uniprot_accession", type="uniprot_accession", value=accession))
+        edges.append(Edge(src="uniprot_accession", dst=protein_node, type="identifies_uniprot_entry"))
+        tokens.append(f"UNIPROT:accession:{normalize_fragment(accession)}")
+    scalar_specs = [
+        (("protein_name", "Protein names", "recommended_name"), "protein_name", "names_protein", "UNIPROT:protein_name"),
+        (("gene_names", "Gene Names", "gene"), "gene_name", "encoded_by_gene", "UNIPROT:gene"),
+        (("organism", "Organism", "source_organism"), "organism", "source_organism", "UNIPROT:organism"),
+        (("taxonomy_id", "Organism ID", "taxon", "taxid"), "taxonomy_id", "has_taxonomy", "UNIPROT:taxon"),
+        (("reviewed", "Reviewed"), "uniprot_review_status", "has_review_status", "UNIPROT:reviewed"),
+        (("subcellular_location", "Subcellular location [CC]", "location"), "subcellular_location", "localizes_to", "UNIPROT:location"),
+        (("pathway", "Pathway", "pathways"), "pathway_annotation", "has_pathway", "UNIPROT:pathway"),
+        (("cofactor", "Cofactor", "cofactors"), "cofactor_annotation", "has_cofactor", "UNIPROT:cofactor"),
+        (("catalytic_activity", "Catalytic activity", "catalytic"), "catalytic_activity", "has_catalytic_activity", "UNIPROT:catalytic_activity"),
+        (("subunit", "Subunit structure", "subunit_structure"), "subunit_annotation", "has_subunit", "UNIPROT:subunit"),
+    ]
+    scalar_idx = 0
+    for keys, node_type, edge_type, token_prefix in scalar_specs:
+        for item in _record_items(_first_text(row, keys)):
+            text = _record_text(item)
+            if not text:
+                continue
+            node_id = f"uniprot_scalar_{scalar_idx}"
+            nodes.append(Node(id=node_id, type=node_type, value=text[:512]))
+            edges.append(Edge(src=protein_node, dst=node_id, type=edge_type))
+            if function_node:
+                edges.append(Edge(src=node_id, dst=function_node, type="supports_function_description"))
+            tokens.append(f"{token_prefix}:{normalize_fragment(text)[:80]}")
+            scalar_idx += 1
+            if scalar_idx >= 64:
+                break
+    list_specs = [
+        (("keywords", "Keywords"), "uniprot_keyword", "has_keyword", "UNIPROT:keyword"),
+        (("go_terms", "go", "Gene Ontology IDs", "Gene Ontology (GO)"), "go_annotation", "has_go_annotation", "UNIPROT:go"),
+        (("domains", "domain", "domain_extents"), "uniprot_domain", "has_domain_annotation", "UNIPROT:domain"),
+        (("families", "protein_families", "family"), "protein_family", "has_family_annotation", "UNIPROT:family"),
+        (("ptm", "post_translational_modification", "modified_residue"), "ptm_annotation", "has_ptm_annotation", "UNIPROT:ptm"),
+        (("variants", "variant", "natural_variant"), "variant_annotation", "has_variant_annotation", "UNIPROT:variant"),
+    ]
+    list_idx = 0
+    for keys, node_type, edge_type, token_prefix in list_specs:
+        raw_value = None
+        for key in keys:
+            if row.get(key) is not None:
+                raw_value = row.get(key)
+                break
+        for item in _record_items(raw_value):
+            text = _record_text(item)
+            if not text:
+                continue
+            features = {}
+            if isinstance(item, dict):
+                for name in ("begin", "end", "position", "evidence", "id", "type"):
+                    if item.get(name) is not None:
+                        features[name] = item.get(name)
+            node_id = f"uniprot_list_{list_idx}"
+            nodes.append(Node(id=node_id, type=node_type, value=text[:512], features=features))
+            edges.append(Edge(src=protein_node, dst=node_id, type=edge_type))
+            if function_node:
+                edges.append(Edge(src=node_id, dst=function_node, type="supports_function_description"))
+            tokens.append(f"{token_prefix}:{normalize_fragment(text)[:80]}")
+            list_idx += 1
+            if list_idx >= 128:
+                break
+    feature_idx = 0
+    feature_sources = (
+        "features",
+        "Features",
+        "uniprot_features",
+        "Binding site",
+        "Active site",
+        "Metal binding",
+        "DNA binding",
+        "binding_sites",
+        "binding_site",
+        "active_sites",
+        "active_site",
+        "metal_binding",
+        "dna_binding",
+        "calcium_binding",
+        "site",
+    )
+    for key in feature_sources:
+        for item in _record_items(row.get(key)):
+            if isinstance(item, dict):
+                feature_type = _first_text(item, ("type", "category", "feature_type", "key")) or key
+                description = _record_text(item, ("description", "ligand", "note", "text", "value", "type"))
+                begin = item.get("begin") or item.get("start") or item.get("position")
+                end = item.get("end") or item.get("stop") or begin
+            else:
+                feature_type = key
+                description = str(item)
+                begin = None
+                end = None
+            feature_norm = normalize_fragment(feature_type)
+            node_id = f"uniprot_feature_{feature_idx}"
+            nodes.append(
+                Node(
+                    id=node_id,
+                    type="uniprot_feature",
+                    value=(description or feature_type)[:512],
+                    features={"feature_type": feature_norm, "begin": begin, "end": end},
+                )
+            )
+            edges.append(Edge(src=protein_node, dst=node_id, type="has_uniprot_feature"))
+            if "binding" in feature_norm or key in {"binding_sites", "binding_site"}:
+                edges.append(Edge(src=node_id, dst=protein_node, type="marks_binding_site"))
+                tokens.append("UNIPROT:feature:binding_site")
+            tokens.append(f"UNIPROT:feature:{feature_norm}")
+            if begin is not None:
+                tokens.append(f"UNIPROT:feature_position:{normalize_fragment(str(begin))}")
+            feature_idx += 1
+            if feature_idx >= 192:
+                break
+    return sorted(dict.fromkeys(tokens))
+
+
 def smiles_to_selfies(smiles: str) -> str:
     if not smiles:
         return ""
@@ -663,9 +856,9 @@ def graphify_nucleotide_sequence(row: dict[str, Any], idx: int, dataset_name: st
 
 
 def graphify_protein_ec(row: dict[str, Any], idx: int, dataset_name: str) -> GraphExample:
-    sequence = str(row.get("protein_sequence") or row.get("sequence") or row.get("aa_sequence") or "")
-    ec_number = str(row.get("ec_number") or row.get("EC") or row.get("ec") or "")
-    organism = str(row.get("organism") or row.get("taxon") or "")
+    sequence = str(row.get("protein_sequence") or row.get("sequence") or row.get("Sequence") or row.get("aa_sequence") or "")
+    ec_number = str(row.get("ec_number") or row.get("EC") or row.get("ec") or row.get("EC number") or "")
+    organism = str(row.get("organism") or row.get("Organism") or row.get("taxon") or "")
     function_text = str(
         row.get("function_description")
         or row.get("function")
@@ -727,12 +920,20 @@ def graphify_protein_ec(row: dict[str, Any], idx: int, dataset_name: str) -> Gra
                 break
         if motif_count >= 128:
             break
+    uniprot_tokens = _add_uniprot_annotations(
+        nodes,
+        edges,
+        row,
+        protein_node="protein",
+        function_node="function" if function_text else None,
+    )
     target_tokens = ["UNIGENX:domain:protein", f"PROTEIN:length:{len(sequence)}"]
     if ec_number:
         target_tokens.append(f"EC:{ec_number}")
     if function_text:
         target_tokens.extend(["UGM:task:function_description", "UGM:serializer:text", f"ANSWER:{function_text[:120]}"])
     target_tokens.extend(motif_tokens)
+    target_tokens.extend(uniprot_tokens)
     ex = GraphExample(
         id=f"{dataset_name}_{idx}_{_stable_id(sequence + ec_number)}",
         task="unigenx_ec_protein_generation",
@@ -810,6 +1011,112 @@ def graphify_protein_ligand_docking(row: dict[str, Any], idx: int, dataset_name:
             "pocket_atom_count": len(pocket_atoms) if hasattr(pocket_atoms, "__len__") else 0,
             "ligand_coordinate_count": len(ligand_coords) if hasattr(ligand_coords, "__len__") else 0,
             "affinity": affinity,
+        },
+    )
+    ex.decoder_orders = build_orders(ex.target_tokens, seed=idx)
+    return ex
+
+
+def _complex_components(row: dict[str, Any]) -> list[tuple[str, str, str]]:
+    components: list[tuple[str, str, str]] = []
+    for item in _record_items(row.get("components") or row.get("complex_components")):
+        if not isinstance(item, dict):
+            continue
+        kind = normalize_fragment(_first_text(item, ("type", "kind", "modality")) or "biomolecule")
+        sequence = _first_text(item, ("sequence", "protein_sequence", "rna_sequence", "dna_sequence", "smiles", "selfies", "value"))
+        name = _first_text(item, ("name", "id", "accession")) or f"{kind}_{len(components)}"
+        if sequence:
+            components.append((kind, sequence, name))
+    keyed_specs = [
+        ("protein", ("protein_sequence_a", "protein_a_sequence", "sequence_a", "chain_a_sequence", "protein_sequence_1", "protein1_sequence")),
+        ("protein", ("protein_sequence_b", "protein_b_sequence", "sequence_b", "chain_b_sequence", "protein_sequence_2", "protein2_sequence")),
+        ("protein", ("protein_sequence", "target_sequence")),
+        ("rna", ("rna_sequence", "rna_sequence_a", "rna_sequence_1")),
+        ("rna", ("rna_sequence_b", "rna_sequence_2")),
+        ("dna", ("dna_sequence", "dna_sequence_a", "dna_sequence_1")),
+        ("dna", ("dna_sequence_b", "dna_sequence_2")),
+        ("ligand", ("ligand_smiles", "smiles", "SMILES")),
+        ("ligand_selfies", ("selfies", "SELFIES", "ligand_selfies")),
+    ]
+    seen = {(kind, value) for kind, value, _name in components}
+    for kind, keys in keyed_specs:
+        value = _first_text(row, keys)
+        if value and (kind, value) not in seen:
+            components.append((kind, value, keys[0]))
+            seen.add((kind, value))
+    return components
+
+
+def _has_complex_affinity(row: dict[str, Any]) -> bool:
+    _measure, value, _units = _affinity_value(row)
+    return bool(value) and len(_complex_components(row)) >= 2
+
+
+def graphify_biomolecular_complex_affinity(row: dict[str, Any], idx: int, dataset_name: str) -> GraphExample:
+    components = _complex_components(row)
+    measure, affinity, units = _affinity_value(row)
+    interaction_type = _first_text(row, ("interaction_type", "complex_type", "assay_type", "standard_type")) or "biomolecular_complex"
+    nodes = [Node(id="domain", type="science_domain", value="biomolecular_complex_affinity"), Node(id="complex", type="biomolecular_complex", value=interaction_type)]
+    edges = [Edge(src="domain", dst="complex", type="has_complex")]
+    target_tokens = ["BIOMED:complex_affinity", f"COMPLEX:interaction:{normalize_fragment(interaction_type)}"]
+    for comp_idx, (kind, value, name) in enumerate(components[:8]):
+        node_id = f"component{comp_idx}"
+        node_type = {
+            "protein": "protein_sequence",
+            "rna": "rna_sequence",
+            "dna": "dna_sequence",
+            "ligand": "smiles",
+            "ligand_selfies": "selfies",
+        }.get(kind, "biomolecule_component")
+        nodes.append(Node(id=node_id, type=node_type, value=value[:2048], features={"component_index": comp_idx, "component_name": name, "component_kind": kind, "length": len(value)}))
+        edges.append(Edge(src="complex", dst=node_id, type="has_component"))
+        target_tokens.append(f"COMPLEX:component:{kind}")
+        if kind == "protein":
+            residue_nodes, residue_edges = _sequence_nodes(value, f"component{comp_idx}_res", "amino_acid", max_len=128)
+            nodes.extend(residue_nodes)
+            edges.extend(residue_edges)
+            for residue in residue_nodes:
+                edges.append(Edge(src=node_id, dst=residue.id, type="contains_residue"))
+        elif kind in {"rna", "dna"}:
+            base_type = "rna_base" if kind == "rna" else "dna_base"
+            base_nodes, base_edges = _sequence_nodes(value, f"component{comp_idx}_base", base_type, max_len=128)
+            nodes.extend(base_nodes)
+            edges.extend(base_edges)
+            for base in base_nodes:
+                edges.append(Edge(src=node_id, dst=base.id, type="contains_base"))
+    for src_idx in range(min(len(components), 8)):
+        for dst_idx in range(src_idx + 1, min(len(components), 8)):
+            edges.append(Edge(src=f"component{src_idx}", dst=f"component{dst_idx}", type="forms_complex_with", features={"interaction_type": interaction_type}))
+    if affinity:
+        nodes.append(Node(id="affinity", type="binding_affinity", value=affinity, features={"measure": measure, "units": units}))
+        edges.append(Edge(src="complex", dst="affinity", type="has_affinity_measurement"))
+        target_tokens.append(f"AFFINITY:{measure}:{affinity[:80]}{units[:24]}")
+    for condition_key, node_type, token_prefix in [
+        ("temperature", "temperature", "TEMP"),
+        ("pH", "ph", "PH"),
+        ("buffer", "assay_buffer", "BUFFER"),
+        ("assay", "assay_type", "ASSAY"),
+    ]:
+        value = row.get(condition_key)
+        if value is None or not str(value).strip():
+            continue
+        node_id = f"condition_{normalize_fragment(condition_key)}"
+        nodes.append(Node(id=node_id, type=node_type, value=str(value)[:256]))
+        edges.append(Edge(src=node_id, dst="affinity", type="conditions_affinity" if affinity else "conditions_complex"))
+        target_tokens.append(f"{token_prefix}:{normalize_fragment(str(value))[:80]}")
+    ex = GraphExample(
+        id=f"{dataset_name}_{idx}_{_stable_id('|'.join(value[:64] for _kind, value, _name in components) + affinity)}",
+        task="biomolecular_complex_affinity",
+        nodes=nodes,
+        edges=edges,
+        target_tokens=target_tokens,
+        metadata={
+            "source_dataset": dataset_name,
+            "component_count": len(components),
+            "component_kinds": [kind for kind, _value, _name in components],
+            "affinity": affinity,
+            "affinity_measure": measure,
+            "affinity_units": units,
         },
     )
     ex.decoder_orders = build_orders(ex.target_tokens, seed=idx)
@@ -1044,11 +1351,17 @@ def graphify_rows(rows: Iterable[dict[str, Any]], dataset_name: str, start_idx: 
             ex = graphify_graph_reasoning(row, idx, dataset_name)
         elif "local_audio" in lname or row.get("local_audio_path") or row.get("audio_path"):
             ex = graphify_local_audio(row, idx, dataset_name)
+        elif "complex_affinity" in lname or "biomolecular_affinity" in lname or "ppi_affinity" in lname or _has_complex_affinity(row):
+            ex = graphify_biomolecular_complex_affinity(row, idx, dataset_name)
         elif (
             "multimodal" in lname
             or "graph_to_graph" in lname
             or row.get("selfies")
             or row.get("SELFIES")
+            or row.get("bioselfies")
+            or row.get("bio_selfies")
+            or row.get("BioSELFIES")
+            or str(row.get("input_representation") or row.get("tokenizer") or "").lower() in {"bioselfies", "bio_selfies", "bio-selfies"}
             or row.get("dna_sequence")
             or row.get("rna_sequence")
             or row.get("frames")

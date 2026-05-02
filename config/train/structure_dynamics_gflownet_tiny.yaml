@@ -1,0 +1,27 @@
+seed: 89
+stage:
+  name: structure_dynamics_gflownet
+run:
+  output_dir: outputs/structure_dynamics_gflownet_tiny
+  device: cuda
+train:
+  batch_size: 8
+  max_steps: 20
+  learning_rate: 0.0005
+  weight_decay: 0.0
+  log_every: 5
+gflownet:
+  mode: structure_dynamics
+  max_actions: 96
+  hidden_dim: 128
+  init_log_z: 0.0
+  max_traj_steps: 10
+  epsilon: 0.05
+  use_context: true
+  learn_backward_policy: true
+  subtrajectory_weight: 0.1
+  temperature_diversity_reward_weight: 0.05
+wandb:
+  enabled: false
+  project: iska-ugm
+  mode: offline

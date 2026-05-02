@@ -1,0 +1,40 @@
+seed: 89
+stage:
+  name: structure_dynamics_gflownet
+run:
+  output_dir: outputs/structure_dynamics_gflownet_4090
+  device: cuda
+train:
+  batch_size: 16
+  max_steps: 3000
+  learning_rate: 0.00035
+  weight_decay: 0.0
+  log_every: 10
+gflownet:
+  mode: structure_dynamics
+  max_actions: 192
+  hidden_dim: 256
+  init_log_z: 0.0
+  max_traj_steps: 14
+  epsilon: 0.05
+  use_context: true
+  learn_backward_policy: true
+  subtrajectory_weight: 0.1
+  temperature_diversity_reward_weight: 0.05
+oracle:
+  backend: fairchem
+  strict: false
+  fairchem_repo: data/external_repos/fairchem
+  model_name: uma-s-1p2
+  task_name: omol
+  device: cuda
+wandb:
+  enabled: true
+  project: iska-ugm
+  mode: online
+  group: structure-dynamics-gflownet-4090
+  tags:
+    - gflownet
+    - structure-dynamics
+    - uma
+    - trajectory-balance

@@ -170,7 +170,7 @@ def _has_string_molecule_anchor(example: GraphExample) -> bool:
     metadata = example.metadata or {}
     if metadata.get("smiles") or metadata.get("selfies"):
         return True
-    return any(node.type in {"smiles", "selfies", "molecule_sequence"} for node in example.nodes)
+    return any(node.type in {"smiles", "selfies", "bioselfies", "molecule_sequence"} for node in example.nodes)
 
 
 def graph_structure_violations(example: GraphExample) -> list[str]:

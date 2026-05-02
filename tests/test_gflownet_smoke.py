@@ -1,6 +1,8 @@
+import json
+
 import torch
 
-from iska_reasoner.gflownet.trainer import _temperature_diversity_bonuses
+from iska_reasoner.gflownet.trainer import _candidate_vocab, _structure_dynamics_reward, _temperature_diversity_bonuses
 from iska_reasoner.gflownet.trajectory import GraphSetPolicy, TrajectoryBalanceLoss, sample_trajectories
 from iska_reasoner.graph.schema import GraphExample, Node
 
@@ -53,3 +55,74 @@ def test_temperature_diversity_bonus_prefers_high_temperature_terminal_variation
     assert bonuses[2] == 0.0
     assert metrics["high_temperature_unique_terminal_states"] == 2.0
     assert metrics["high_temperature_terminal_hamming"] > 0.0
+
+
+def test_structure_dynamics_gflownet_reward_prefers_oracle_action_coverage():
+    example = GraphExample(
+        id="dyn",
+        task="structure_dynamics_proxy",
+        nodes=[],
+        edges=[],
+        target_tokens=[
+            "UGM:task:structure_dynamics_proxy",
+            "UGM:oracle:uma_feedback",
+            "SEQ_STRUCT_DYN_PROXY:temperature_conditioned",
+            "INTERNAL_COORD:protein_phi",
+            "ADAPTIVE_PATCH:residue_atom_patch",
+            "CONTACT_PATCH:hbond",
+            "TOKEN_MOTION:uma:refine:b32",
+        ],
+    )
+    verifier = type("Verifier", (), {"reward": 0.5})()
+    rich_reward, metrics = _structure_dynamics_reward(
+        example,
+        [
+            "UGM:task:structure_dynamics_proxy",
+            "UGM:oracle:uma_feedback",
+            "SEQ_STRUCT_DYN_PROXY:temperature_conditioned",
+            "INTERNAL_COORD:protein_phi",
+            "ADAPTIVE_PATCH:residue_atom_patch",
+            "CONTACT_PATCH:hbond",
+            "TOKEN_MOTION:uma:refine:b32",
+        ],
+        verifier,
+    )
+    sparse_reward, _ = _structure_dynamics_reward(example, ["UGM:task:structure_dynamics_proxy"], verifier)
+    assert rich_reward > sparse_reward
+    assert metrics["structure_dynamics_internal_rate"] == 1.0
+    assert metrics["structure_dynamics_patch_rate"] == 1.0
+    assert metrics["structure_dynamics_contact_rate"] == 1.0
+
+
+def test_structure_dynamics_candidate_vocab_filters_to_dynamics_tokens(tmp_path):
+    path = tmp_path / "graphs.jsonl"
+    rows = [
+        GraphExample(
+            id="a",
+            task="structure_dynamics_proxy",
+            nodes=[],
+            edges=[],
+            target_tokens=[
+                "ANSWER:plain",
+                "INTERNAL_COORD:protein_phi",
+                "ADAPTIVE_PATCH:residue_atom_patch",
+                "UGM:oracle:uma_feedback",
+            ],
+        ).to_dict(),
+        GraphExample(
+            id="b",
+            task="structure_dynamics_proxy",
+            nodes=[],
+            edges=[],
+            target_tokens=["CONTACT_PATCH:hbond", "TOKEN_MOTION:uma:refine:b32"],
+        ).to_dict(),
+    ]
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+    from iska_reasoner.data.dataset import GraphJsonlDataset
+
+    dataset = GraphJsonlDataset(path)
+    candidates, _ = _candidate_vocab(dataset, 16, mode="structure_dynamics")
+    assert "ANSWER:plain" not in candidates
+    assert "INTERNAL_COORD:protein_phi" in candidates
+    assert "ADAPTIVE_PATCH:residue_atom_patch" in candidates
+    assert "CONTACT_PATCH:hbond" in candidates
