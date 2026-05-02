@@ -141,6 +141,31 @@ append_if_exists() {
   fi
 }
 
+is_placeholder_path() {
+  local path="$1"
+  [[ "$path" == /path/to/* || "$path" == "/absolute/path/to/"* || "$path" == *"REPLACE_ME"* || "$path" == *"replace_me"* ]]
+}
+
+validate_source_inputs() {
+  local label="$1"
+  shift
+  local missing=0
+  for input in "$@"; do
+    if is_placeholder_path "$input"; then
+      printf '%s contains a placeholder path: %s\n' "$label" "$input" >&2
+      printf 'Replace it with a real local TSV/CSV/JSON/JSONL/FASTA path, or unset %s to use an existing graph JSONL.\n' "$label" >&2
+      missing=1
+    elif [[ ! -f "$input" ]]; then
+      printf '%s input file does not exist: %s\n' "$label" "$input" >&2
+      missing=1
+    fi
+  done
+  if [[ "$missing" != "0" ]]; then
+    return 1
+  fi
+  return 0
+}
+
 for config in "$MODEL_CONFIG" "$DATA_CONFIG" "$TRAIN_CONFIG" "$WANDB_CONFIG"; do
   append_config "$config"
 done
@@ -167,6 +192,8 @@ fi
 
 read -r -a UNIPROT_INPUT_ARRAY <<< "$UNIPROT_FEATURES_INPUTS"
 read -r -a AFFINITY_INPUT_ARRAY <<< "$AFFINITY_INPUTS"
+validate_source_inputs UNIPROT_FEATURES_INPUTS "${UNIPROT_INPUT_ARRAY[@]}"
+validate_source_inputs AFFINITY_INPUTS "${AFFINITY_INPUT_ARRAY[@]}"
 
 if should_prepare "$PREPARE_UNIPROT" "$UNIPROT_GRAPH_JSONL" "${UNIPROT_INPUT_ARRAY[@]}"; then
   prepare_science uniprot_features uniprot_features_local_export "$UNIPROT_GRAPH_JSONL" "$LIMIT_UNIPROT" "${UNIPROT_INPUT_ARRAY[@]}"

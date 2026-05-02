@@ -567,8 +567,9 @@ conda run -n tokengt python scripts/prepare_science_sources.py \
 To make those two local exports trainable as one corpus and jump directly into the 250M model path:
 
 ```bash
-UNIPROT_FEATURES_INPUTS="/path/to/uniprot_features.tsv" \
-AFFINITY_INPUTS="/path/to/complex_affinity.tsv" \
+# Replace these with real files on this machine; do not use /path/to literally.
+UNIPROT_FEATURES_INPUTS="$PWD/data/local/uniprot_features.tsv" \
+AFFINITY_INPUTS="$PWD/data/local/complex_affinity.tsv" \
 TRAIN_PHASES=all \
 ./scripts/train_biomed_annotations_affinity_direct.sh
 ```
@@ -754,13 +755,20 @@ Most complete strict oracle-dynamics command, with hybrid Flash/MHTA, UMA coordi
 Direct UniProt plus biomolecular-affinity training, with local preparation/curation included when `UNIPROT_FEATURES_INPUTS` or `AFFINITY_INPUTS` are set:
 
 ```bash
-UNIPROT_FEATURES_INPUTS="/path/to/uniprot_features.tsv" \
-AFFINITY_INPUTS="/path/to/complex_affinity.tsv" \
+# Replace these with real files on this machine; do not use /path/to literally.
+UNIPROT_FEATURES_INPUTS="$PWD/data/local/uniprot_features.tsv" \
+AFFINITY_INPUTS="$PWD/data/local/complex_affinity.tsv" \
 TRAIN_PHASES=all \
 ./scripts/train_biomed_annotations_affinity_direct.sh
 ```
 
 This uses `config/model/ugm_250m_tokengt.yaml`, `config/data/biomed_annotations_affinity_250m.yaml`, `config/train/biomed_annotations_affinity_250m.yaml`, `config/train/biomed_annotations_affinity_gflownet_sft_4090.yaml`, and `config/train/biomed_annotations_affinity_structure_dynamics_gflownet_4090.yaml`. It defaults to hybrid Flash/MHTA plus UMA coordinate and internal-coordinate heads.
+
+If `data/processed/uniprot_features_local_export/all.jsonl` and `data/processed/biomolecular_complex_affinity_local/all.jsonl` already exist and are nonempty, unset the input variables and run:
+
+```bash
+TRAIN_PHASES=all ./scripts/train_biomed_annotations_affinity_direct.sh
+```
 
 That wrapper defaults to `FULL_TRAIN_BATCH_SIZE=1`, `FULL_TRAIN_GRAD_ACCUM=36`, `ENABLE_TROPICAL_ATTENTION=1`, `ENABLE_UMA_COORDINATE_HEAD=1`, and `EXTRA_TRAIN_CONFIGS+=config/train/overrides/uma_contact_geometry_loss.yaml`. It is intentionally conservative for a 24GB RTX 4090. After a stable run, try:
 

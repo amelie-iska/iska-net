@@ -130,8 +130,9 @@ conda run -n tokengt python scripts/prepare_science_sources.py \
 Curate those local exports and jump directly to the 250M training stack:
 
 ```bash
-UNIPROT_FEATURES_INPUTS="/path/to/uniprot_features.tsv" \
-AFFINITY_INPUTS="/path/to/complex_affinity.tsv" \
+# Replace these with real files on this machine; do not use /path/to literally.
+UNIPROT_FEATURES_INPUTS="$PWD/data/local/uniprot_features.tsv" \
+AFFINITY_INPUTS="$PWD/data/local/complex_affinity.tsv" \
 TRAIN_PHASES=all \
 ./scripts/train_biomed_annotations_affinity_direct.sh
 ```
@@ -145,6 +146,12 @@ The wrapper writes/uses `data/processed/biomed_annotations_affinity/{train,val,t
 - `config/train/biomed_annotations_affinity_structure_dynamics_gflownet_4090.yaml`
 
 Set `TRAIN_PHASES=sft`, `TRAIN_PHASES=gflownet_sft`, or `TRAIN_PHASES=structure_dynamics_gflownet` to run only one stage.
+
+If the graphified files already exist and are nonempty, leave `UNIPROT_FEATURES_INPUTS` and `AFFINITY_INPUTS` unset:
+
+```bash
+TRAIN_PHASES=all ./scripts/train_biomed_annotations_affinity_direct.sh
+```
 
 Train the SFT GFlowNet and the structure-dynamics GFlowNet separately:
 

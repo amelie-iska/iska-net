@@ -348,6 +348,14 @@ def test_biomolecular_complex_affinity_rows_support_non_ligand_complexes():
 
 
 def test_biomed_annotations_affinity_direct_script_dry_run(tmp_path):
+    (tmp_path / "uniprot.tsv").write_text(
+        "Entry\tSequence\tProtein names\nP12345\tMKTWYV\tToy kinase\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "affinity.tsv").write_text(
+        "protein_sequence_a\tprotein_sequence_b\tKd\tunits\nMKTWYV\tACDEFG\t12\tnM\n",
+        encoding="utf-8",
+    )
     env = os.environ.copy()
     env.update(
         {
@@ -375,6 +383,33 @@ def test_biomed_annotations_affinity_direct_script_dry_run(tmp_path):
     assert "config/train/biomed_annotations_affinity_250m.yaml" in result.stdout
     assert "config/train/biomed_annotations_affinity_gflownet_sft_4090.yaml" in result.stdout
     assert "config/train/biomed_annotations_affinity_structure_dynamics_gflownet_4090.yaml" in result.stdout
+
+
+def test_biomed_annotations_affinity_direct_script_rejects_placeholder_inputs(tmp_path):
+    env = os.environ.copy()
+    env.update(
+        {
+            "DRY_RUN": "1",
+            "RUN_ID": "pytest-biomed-placeholder",
+            "LOG_ROOT": str(tmp_path / "logs"),
+            "DATA_DIR": str(tmp_path / "processed"),
+            "UNIPROT_GRAPH_JSONL": str(tmp_path / "uniprot" / "all.jsonl"),
+            "AFFINITY_GRAPH_JSONL": str(tmp_path / "affinity" / "all.jsonl"),
+            "UNIPROT_FEATURES_INPUTS": "/path/to/uniprot_features.tsv",
+            "AFFINITY_INPUTS": "/path/to/complex_affinity.tsv",
+            "WANDB_CONFIG": "config/train/overrides/wandb_offline.yaml",
+        }
+    )
+    result = subprocess.run(
+        ["bash", "scripts/train_biomed_annotations_affinity_direct.sh"],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode != 0
+    assert "placeholder path" in result.stderr
+    assert "Replace it with a real local" in result.stderr
 
 
 def test_multimodal_graphification_allows_structure_only_when_explicit():

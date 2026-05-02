@@ -102,8 +102,9 @@ conda run -n tokengt python scripts/train_stage.py \
 Train the dedicated UniProt plus biomolecular-affinity stack directly:
 
 ```bash
-UNIPROT_FEATURES_INPUTS="/path/to/uniprot_features.tsv" \
-AFFINITY_INPUTS="/path/to/complex_affinity.tsv" \
+# Replace these with real files on this machine; do not use /path/to literally.
+UNIPROT_FEATURES_INPUTS="$PWD/data/local/uniprot_features.tsv" \
+AFFINITY_INPUTS="$PWD/data/local/complex_affinity.tsv" \
 TRAIN_PHASES=all \
 ./scripts/train_biomed_annotations_affinity_direct.sh
 ```
