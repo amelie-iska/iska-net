@@ -167,7 +167,7 @@ def _add_uniprot_annotations(
         (("protein_name", "Protein names", "recommended_name"), "protein_name", "names_protein", "UNIPROT:protein_name"),
         (("gene_names", "Gene Names", "gene"), "gene_name", "encoded_by_gene", "UNIPROT:gene"),
         (("organism", "Organism", "source_organism"), "organism", "source_organism", "UNIPROT:organism"),
-        (("taxonomy_id", "Organism ID", "taxon", "taxid"), "taxonomy_id", "has_taxonomy", "UNIPROT:taxon"),
+        (("taxonomy_id", "Organism ID", "Organism (ID)", "taxon", "taxid"), "taxonomy_id", "has_taxonomy", "UNIPROT:taxon"),
         (("reviewed", "Reviewed"), "uniprot_review_status", "has_review_status", "UNIPROT:reviewed"),
         (("subcellular_location", "Subcellular location [CC]", "location"), "subcellular_location", "localizes_to", "UNIPROT:location"),
         (("pathway", "Pathway", "pathways"), "pathway_annotation", "has_pathway", "UNIPROT:pathway"),

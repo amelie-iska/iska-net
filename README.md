@@ -564,17 +564,13 @@ conda run -n tokengt python scripts/prepare_science_sources.py \
 
 `--kind biomolecular_affinity`, `complex_affinity`, `ppi_affinity`, and `protein_na_affinity` accept protein, RNA, DNA, ligand, antibody/antigen, receptor/ligand, or arbitrary `components` rows with affinity fields such as `Kd`, `Ki`, `IC50`, `kon`, `koff`, `delta_g`, or `dG`, plus units, temperature, pH, buffer, and assay metadata.
 
-To make those two local exports trainable as one corpus and jump directly into the 250M model path:
+To make the full local UniProt feature export and full local binding-affinity source trainable as one corpus, then jump directly into the 250M SFT plus two-GFlowNet path:
 
 ```bash
-# Replace these with real files on this machine; do not use /path/to literally.
-UNIPROT_FEATURES_INPUTS="$PWD/data/local/uniprot_features.tsv" \
-AFFINITY_INPUTS="$PWD/data/local/complex_affinity.tsv" \
-TRAIN_PHASES=all \
-./scripts/train_biomed_annotations_affinity_direct.sh
+./scripts/run_full_biomed_annotations_affinity_training.sh
 ```
 
-If the graphified files already exist at `data/processed/uniprot_features_local_export/all.jsonl` and `data/processed/biomolecular_complex_affinity_local/all.jsonl`, the same wrapper curates `data/processed/biomed_annotations_affinity/{train,val,test}.jsonl`, checks split integrity, and starts training. `TRAIN_PHASES=sft` trains only `config/train/biomed_annotations_affinity_250m.yaml`; `TRAIN_PHASES=gflownet_sft` or `TRAIN_PHASES=structure_dynamics_gflownet` run the corresponding GFlowNet configs.
+The wrapper first materializes `data/local/uniprot_features.tsv` from the UniProtKB reviewed feature stream and `data/local/complex_affinity.tsv` from the local full-selected `binding_affinity_public` parquet, then graphifies both files, curates `data/processed/biomed_annotations_affinity/{train,val,test}.jsonl`, checks split integrity, and starts training. `TRAIN_PHASES=sft` trains only `config/train/biomed_annotations_affinity_250m.yaml`; `TRAIN_PHASES=gflownet_sft` or `TRAIN_PHASES=structure_dynamics_gflownet` run the corresponding GFlowNet configs. Use `PREPARE_FULL_BIOMED_SOURCES=force PREPARE_UNIPROT=force PREPARE_AFFINITY=force CURATE_DATA=force` to force a complete rebuild.
 
 For sequence/function-description alignment, use the sequence-only kinds:
 
@@ -752,25 +748,26 @@ Most complete strict oracle-dynamics command, with hybrid Flash/MHTA, UMA coordi
 ./scripts/train_full_selected_250m_oracle_dynamics_direct.sh
 ```
 
-Direct UniProt plus biomolecular-affinity training, with local preparation/curation included when `UNIPROT_FEATURES_INPUTS` or `AFFINITY_INPUTS` are set:
+Direct UniProt plus biomolecular-affinity training, with full local source preparation, graphification, curation, SFT, SFT-GFlowNet, and structure-dynamics GFlowNet enabled:
 
 ```bash
-# Replace these with real files on this machine; do not use /path/to literally.
-UNIPROT_FEATURES_INPUTS="$PWD/data/local/uniprot_features.tsv" \
-AFFINITY_INPUTS="$PWD/data/local/complex_affinity.tsv" \
-TRAIN_PHASES=all \
-./scripts/train_biomed_annotations_affinity_direct.sh
+./scripts/run_full_biomed_annotations_affinity_training.sh
 ```
 
 This uses `config/model/ugm_250m_tokengt.yaml`, `config/data/biomed_annotations_affinity_250m.yaml`, `config/train/biomed_annotations_affinity_250m.yaml`, `config/train/biomed_annotations_affinity_gflownet_sft_4090.yaml`, and `config/train/biomed_annotations_affinity_structure_dynamics_gflownet_4090.yaml`. It defaults to hybrid Flash/MHTA plus UMA coordinate and internal-coordinate heads.
 
-If `data/processed/uniprot_features_local_export/all.jsonl` and `data/processed/biomolecular_complex_affinity_local/all.jsonl` already exist and are nonempty, unset the input variables and run:
+If `data/local/uniprot_features.tsv` and `data/local/complex_affinity.tsv` already exist and you only want to rebuild graphification/curation before training:
 
 ```bash
-TRAIN_PHASES=all ./scripts/train_biomed_annotations_affinity_direct.sh
+PREPARE_FULL_BIOMED_SOURCES=0 \
+PREPARE_UNIPROT=force \
+PREPARE_AFFINITY=force \
+CURATE_DATA=force \
+TRAIN_PHASES=all \
+./scripts/run_full_biomed_annotations_affinity_training.sh
 ```
 
-That wrapper defaults to `FULL_TRAIN_BATCH_SIZE=1`, `FULL_TRAIN_GRAD_ACCUM=36`, `ENABLE_TROPICAL_ATTENTION=1`, `ENABLE_UMA_COORDINATE_HEAD=1`, and `EXTRA_TRAIN_CONFIGS+=config/train/overrides/uma_contact_geometry_loss.yaml`. It is intentionally conservative for a 24GB RTX 4090. After a stable run, try:
+The oracle-dynamics 250M wrapper above defaults to `FULL_TRAIN_BATCH_SIZE=1`, `FULL_TRAIN_GRAD_ACCUM=36`, `ENABLE_TROPICAL_ATTENTION=1`, `ENABLE_UMA_COORDINATE_HEAD=1`, and `EXTRA_TRAIN_CONFIGS+=config/train/overrides/uma_contact_geometry_loss.yaml`. It is intentionally conservative for a 24GB RTX 4090. After a stable run, try:
 
 ```bash
 FULL_TRAIN_BATCH_SIZE=2 FULL_TRAIN_EVAL_BATCH_SIZE=2 FULL_TRAIN_GRAD_ACCUM=18 \

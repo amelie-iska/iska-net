@@ -18,9 +18,13 @@ WANDB_CONFIG="${WANDB_CONFIG:-config/train/overrides/wandb_online.yaml}"
 DATA_DIR="${DATA_DIR:-data/processed/biomed_annotations_affinity}"
 UNIPROT_GRAPH_JSONL="${UNIPROT_GRAPH_JSONL:-data/processed/uniprot_features_local_export/all.jsonl}"
 AFFINITY_GRAPH_JSONL="${AFFINITY_GRAPH_JSONL:-data/processed/biomolecular_complex_affinity_local/all.jsonl}"
-UNIPROT_FEATURES_INPUTS="${UNIPROT_FEATURES_INPUTS:-}"
-AFFINITY_INPUTS="${AFFINITY_INPUTS:-}"
+DEFAULT_UNIPROT_FEATURES_INPUT="$ROOT/data/local/uniprot_features.tsv"
+DEFAULT_AFFINITY_INPUT="$ROOT/data/local/complex_affinity.tsv"
+UNIPROT_FEATURES_INPUTS="${UNIPROT_FEATURES_INPUTS:-$DEFAULT_UNIPROT_FEATURES_INPUT}"
+AFFINITY_INPUTS="${AFFINITY_INPUTS:-$DEFAULT_AFFINITY_INPUT}"
 AFFINITY_KIND="${AFFINITY_KIND:-biomolecular_affinity}"
+PREPARE_FULL_BIOMED_SOURCES="${PREPARE_FULL_BIOMED_SOURCES:-auto}"
+FULL_BIOMED_SOURCE_SUMMARY="${FULL_BIOMED_SOURCE_SUMMARY:-data/local/biomed_training_sources.summary.json}"
 PREPARE_UNIPROT="${PREPARE_UNIPROT:-auto}"
 PREPARE_AFFINITY="${PREPARE_AFFINITY:-auto}"
 CURATE_DATA="${CURATE_DATA:-auto}"
@@ -123,11 +127,37 @@ should_prepare() {
     1|true|yes|force) return 0 ;;
     0|false|no) return 1 ;;
     auto)
-      [[ "$#" -gt 0 && ! -s "$output" ]]
-      return $?
+      if [[ "$#" -eq 0 ]]; then
+        return 1
+      fi
+      if [[ ! -s "$output" ]]; then
+        return 0
+      fi
+      for input in "$@"; do
+        if [[ -f "$input" && "$input" -nt "$output" ]]; then
+          return 0
+        fi
+      done
+      return 1
       ;;
     *)
       printf 'Invalid prepare mode: %s\n' "$mode" >&2
+      exit 1
+      ;;
+  esac
+}
+
+should_prepare_full_sources() {
+  local mode="$1"
+  case "$mode" in
+    1|true|yes|force) return 0 ;;
+    0|false|no) return 1 ;;
+    auto)
+      [[ "$UNIPROT_FEATURES_INPUTS" == "$DEFAULT_UNIPROT_FEATURES_INPUT" || "$AFFINITY_INPUTS" == "$DEFAULT_AFFINITY_INPUT" ]]
+      return $?
+      ;;
+    *)
+      printf 'Invalid full-source prepare mode: %s\n' "$mode" >&2
       exit 1
       ;;
   esac
@@ -190,6 +220,24 @@ if [[ -n "$EXTRA_TRAIN_CONFIGS" ]]; then
   done
 fi
 
+if should_prepare_full_sources "$PREPARE_FULL_BIOMED_SOURCES"; then
+  source_args=(python scripts/prepare_biomed_training_sources.py --summary "$FULL_BIOMED_SOURCE_SUMMARY")
+  if [[ "$UNIPROT_FEATURES_INPUTS" == "$DEFAULT_UNIPROT_FEATURES_INPUT" ]]; then
+    source_args+=(--uniprot-output "$DEFAULT_UNIPROT_FEATURES_INPUT")
+  else
+    source_args+=(--skip-uniprot)
+  fi
+  if [[ "$AFFINITY_INPUTS" == "$DEFAULT_AFFINITY_INPUT" ]]; then
+    source_args+=(--affinity-output "$DEFAULT_AFFINITY_INPUT")
+  else
+    source_args+=(--skip-affinity)
+  fi
+  if [[ "$PREPARE_FULL_BIOMED_SOURCES" == "force" || "$PREPARE_FULL_BIOMED_SOURCES" == "1" || "$PREPARE_FULL_BIOMED_SOURCES" == "true" || "$PREPARE_FULL_BIOMED_SOURCES" == "yes" ]]; then
+    source_args+=(--force)
+  fi
+  run_cx "${source_args[@]}"
+fi
+
 read -r -a UNIPROT_INPUT_ARRAY <<< "$UNIPROT_FEATURES_INPUTS"
 read -r -a AFFINITY_INPUT_ARRAY <<< "$AFFINITY_INPUTS"
 validate_source_inputs UNIPROT_FEATURES_INPUTS "${UNIPROT_INPUT_ARRAY[@]}"
@@ -221,7 +269,23 @@ if [[ "${#INPUT_GRAPHS[@]}" -eq 0 ]]; then
   exit 1
 fi
 
-if [[ "$CURATE_DATA" == "1" || "$CURATE_DATA" == "true" || "$CURATE_DATA" == "force" || ( "$CURATE_DATA" == "auto" && ! -s "$DATA_DIR/train.jsonl" ) ]]; then
+needs_curation=0
+if [[ "$CURATE_DATA" == "1" || "$CURATE_DATA" == "true" || "$CURATE_DATA" == "force" ]]; then
+  needs_curation=1
+elif [[ "$CURATE_DATA" == "auto" ]]; then
+  if [[ ! -s "$DATA_DIR/train.jsonl" ]]; then
+    needs_curation=1
+  else
+    for graph in "${INPUT_GRAPHS[@]}"; do
+      if [[ "$graph" -nt "$DATA_DIR/train.jsonl" ]]; then
+        needs_curation=1
+        break
+      fi
+    done
+  fi
+fi
+
+if [[ "$needs_curation" == "1" ]]; then
   curate_args=(python scripts/curate_data.py --output-dir "$DATA_DIR" --val-ratio "$VAL_RATIO" --test-ratio "$TEST_RATIO" --split-policy "$SPLIT_POLICY")
   for graph in "${INPUT_GRAPHS[@]}"; do
     curate_args+=(--input "$graph")

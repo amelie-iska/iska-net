@@ -23,7 +23,9 @@ tea_debug.log
 
 # Data policy: keep manifests/docs, ignore bulk data by default.
 data/raw/
+data/raw_public/
 data/raw_hf_full/
+data/local/
 data/processed/
 data/samples/
 data/raw_motifs/

@@ -128,7 +128,7 @@ def normalize_row(row: dict[str, Any], kind: str) -> dict[str, Any]:
         out.setdefault("protein_name", row.get("Protein names") or row.get("protein_name") or row.get("recommended_name"))
         out.setdefault("gene_names", row.get("Gene Names") or row.get("gene_names") or row.get("gene"))
         out.setdefault("organism", row.get("Organism") or row.get("organism"))
-        out.setdefault("taxonomy_id", row.get("Organism ID") or row.get("taxonomy_id") or row.get("taxid"))
+        out.setdefault("taxonomy_id", row.get("Organism ID") or row.get("Organism (ID)") or row.get("taxonomy_id") or row.get("taxid"))
         out.setdefault("go_terms", row.get("Gene Ontology IDs") or row.get("Gene Ontology (GO)") or row.get("go_terms") or row.get("go"))
         out.setdefault("keywords", row.get("Keywords") or row.get("keywords"))
         out.setdefault("features", row.get("Features") or row.get("features") or row.get("uniprot_features"))
