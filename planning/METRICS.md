@@ -141,6 +141,10 @@ Biomedical/bioactivity metrics:
 - `biomed/assay_numeric_present_rate`: assay values containing parseable numbers.
 - `biomed/target_node_count_mean`: target/protein node count.
 - `biomed/smiles_present_rate`: examples with ligand SMILES nodes.
+- `biomed/uniprot_feature_row_count`: count of UniProt feature rows in the local full biomed source set. Current full local source: 574,627 data rows.
+- `biomed/complex_affinity_row_count`: count of biomolecular complex-affinity rows in the local full biomed source set. Current full local source: 1,836,729 data rows.
+- `biomed/full_local_row_count`: combined full local UniProt feature plus complex-affinity corpus size before curation. Current full local source: 2,411,356 data rows.
+- `biomed/fast_curation_rows_per_second`: rows/sec during `FAST_CURATE=1` direct JSONL curation from completed graph files.
 
 UGM multimodal metrics:
 

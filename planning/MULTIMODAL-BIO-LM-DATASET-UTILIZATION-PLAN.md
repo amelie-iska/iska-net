@@ -67,6 +67,24 @@ UGM now has two separate GFlowNet tracks:
 
 The standard SFT phase can train on UniProt feature rows and affinity rows directly. The structure-dynamics phase then uses those annotations as context: binding residues and complex components become places where internal-coordinate actions, contact patches, adaptive atom patches, and UMA-scored geometry proposals should concentrate.
 
+## Current Full Local Corpus Status
+
+The current local biomed source set is fully materialized as local TSV plus graph JSONL:
+
+- `data/local/uniprot_features.tsv`: 574,627 UniProtKB reviewed feature data rows, plus one header row.
+- `data/local/complex_affinity.tsv`: 1,836,729 biomolecular complex-affinity data rows, plus one header row.
+- `data/processed/uniprot_features_local_export/all.jsonl`: graphified UniProt feature rows, about 36 GB.
+- `data/processed/biomolecular_complex_affinity_local/all.jsonl`: graphified complex-affinity rows, about 66 GB.
+
+Together this is 2,411,356 trainable data rows before curation and any exact duplicate removal. The full wrapper should normally be resumed from the graph JSONL files with `FAST_CURATE=1` once those files exist. That path performs exact raw-row deduplication, entity splitting, and direct JSONL line copying, which avoids the previous failure mode where curation attempted to hold the entire 100 GB-scale graph corpus in memory.
+
+Expected runtime on the current 24 GB RTX 4090 workstation:
+
+- fast curation from completed graph JSONL: about one hour at roughly 600 rows/sec after warmup;
+- split integrity scan: minutes, dominated by reading the curated JSONL;
+- 250M SFT full epoch: about 60k optimizer steps with effective batch 36, usually 1-3 days depending on step time;
+- SFT GFlowNet and structure-dynamics GFlowNet: 3k steps each by default, shorter than the SFT phase.
+
 ## Commands
 
 Prepare UniProt feature rows:
@@ -110,6 +128,18 @@ TRAIN_PHASES=all \
 ```
 
 This command prepares local graph JSONL if needed, curates `data/processed/biomed_annotations_affinity`, checks split integrity, trains the 250M SFT model config, then runs the SFT GFlowNet and structure-dynamics GFlowNet configs when `TRAIN_PHASES=all`.
+
+Resume from completed graph JSONL without repeating TSV preparation or graphification:
+
+```bash
+PREPARE_FULL_BIOMED_SOURCES=0 \
+PREPARE_UNIPROT=0 \
+PREPARE_AFFINITY=0 \
+CURATE_DATA=force \
+FAST_CURATE=1 \
+TRAIN_PHASES=all \
+./scripts/run_full_biomed_annotations_affinity_training.sh
+```
 
 Train the structure-dynamics GFlowNet:
 
