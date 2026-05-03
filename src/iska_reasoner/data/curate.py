@@ -10,7 +10,15 @@ from typing import Any, TextIO
 
 from tqdm.auto import tqdm
 
-from iska_reasoner.data.splits import SplitReport, assign_split_for_policy
+from iska_reasoner.data.splits import (
+    EXPLICIT_SPLIT_KEYS,
+    SplitReport,
+    _clean,
+    _molecule_key,
+    _sequence_key,
+    assign_split_for_policy,
+    split_name_from_key,
+)
 from iska_reasoner.graph.schema import GraphExample
 from iska_reasoner.topology import summarize_graph
 from iska_reasoner.utils.io import ensure_dir, read_jsonl
@@ -121,14 +129,93 @@ def split_name(example_hash: str, val_ratio: float, test_ratio: float) -> str:
     return "train"
 
 
-def _write_jsonl_row(handle: TextIO, row: dict[str, Any]) -> None:
-    handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True))
+def _write_jsonl_row(handle: TextIO, row: dict[str, Any], *, sort_keys: bool = True) -> None:
+    handle.write(json.dumps(row, ensure_ascii=False, sort_keys=sort_keys))
+    handle.write("\n")
+
+
+def _write_jsonl_line(handle: TextIO, line: str) -> None:
+    handle.write(line.rstrip("\n"))
     handle.write("\n")
 
 
 def _cleanup_split_indexes(output_dir: Path, split: str) -> None:
     for suffix in (".offsets.u64", ".offsets.meta.json"):
         (output_dir / f"{split}.jsonl{suffix}").unlink(missing_ok=True)
+
+
+def _iter_jsonl_lines(path: str | Path):
+    with Path(path).open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if line:
+                yield line
+
+
+def _metadata_first(metadata: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = metadata.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _first_node_value(row: dict[str, Any], node_types: set[str]) -> str:
+    for node in row.get("nodes") or []:
+        if node.get("type") in node_types and node.get("value"):
+            return str(node["value"]).strip()
+    return ""
+
+
+def _row_split_key(row: dict[str, Any], split_policy: str, row_hash: str) -> str:
+    if split_policy == "row_hash":
+        return f"row_hash:{row_hash}"
+    if split_policy != "entity":
+        raise ValueError(f"Unknown split policy {split_policy!r}; expected row_hash or entity")
+
+    metadata = row.get("metadata") or {}
+    for key in EXPLICIT_SPLIT_KEYS:
+        value = metadata.get(key)
+        if value is not None and str(value).strip():
+            return f"{key}:{_clean(value)}"
+
+    protein_sequence = _metadata_first(metadata, "protein_sequence", "sequence", "aa_sequence") or _first_node_value(
+        row, {"protein_sequence"}
+    )
+    if protein_sequence:
+        return f"protein_seq:{_sequence_key(protein_sequence, alphabet='protein')}"
+
+    rna_sequence = _metadata_first(metadata, "rna_sequence", "rna") or _first_node_value(row, {"rna_sequence", "rna"})
+    if rna_sequence:
+        family = _metadata_first(metadata, "rfam_family", "rna_family", "family")
+        if family:
+            return f"rna_family:{_clean(family)}"
+        return f"rna_seq:{_sequence_key(rna_sequence, alphabet='rna')}"
+
+    dna_sequence = _metadata_first(metadata, "dna_sequence", "dna") or _first_node_value(row, {"dna_sequence", "dna"})
+    if dna_sequence:
+        return f"dna_seq:{_sequence_key(dna_sequence, alphabet='dna')}"
+
+    smiles = _metadata_first(metadata, "smiles", "ligand_smiles", "selfies") or _first_node_value(
+        row, {"smiles", "selfies"}
+    )
+    if smiles:
+        return _molecule_key(smiles, metadata)
+
+    graph_seed = _metadata_first(metadata, "graph_generator_seed", "generator_seed")
+    if graph_seed:
+        return f"graph_seed:{_clean(graph_seed)}"
+
+    for key in ("doi", "arxiv_id", "paper_id", "document_id", "source_document", "title", "record_id", "set_id"):
+        value = metadata.get(key)
+        if value is not None and str(value).strip():
+            return f"document:{_clean(value)}"
+    for node in row.get("nodes") or []:
+        if node.get("type") in {"doi", "arxiv_id", "paper_id", "document_id", "title", "hebrew_title"} and node.get(
+            "value"
+        ):
+            return f"document:{_clean(node['value'])}"
+    return f"row_hash:{row_hash}"
 
 
 def curate_files(
@@ -141,6 +228,9 @@ def curate_files(
     blocked_license_patterns: list[str] | None = None,
     contamination_paths: list[str | Path] | None = None,
     split_policy: str = "row_hash",
+    dedup_key: str = "graph_hash",
+    quality_mode: str = "full",
+    fast_copy: bool = False,
 ) -> dict[str, Any]:
     output_dir = ensure_dir(output_dir)
     seen: set[str] = set()
@@ -163,54 +253,99 @@ def curate_files(
     contamination = contamination_terms(contamination_paths)
     split_report = SplitReport(policy=split_policy)
 
+    fast_row_mode = dedup_key == "row_hash" and quality_mode == "none" and not near_dedup_enabled
+    if fast_copy and not fast_row_mode:
+        raise ValueError("--fast-copy requires --dedup-key row_hash, --quality-mode none, and near-dedup disabled")
+
     temp_paths = {split: output_dir / f".{split}.jsonl.tmp" for split in split_counts}
     handles: dict[str, TextIO] = {}
     try:
         for split, temp_path in temp_paths.items():
             handles[split] = temp_path.open("w", encoding="utf-8")
 
-        for input_path in input_paths:
-            for row in tqdm(read_jsonl(input_path), desc=f"curate/{Path(input_path).name}", unit="row"):
-                before += 1
-                try:
-                    example = GraphExample.from_dict(row)
-                except Exception:
-                    invalid += 1
-                    continue
-                h = graph_hash(example)
-                if h in seen:
-                    duplicate += 1
-                    continue
-                if not license_allowed(example, blocked_license_patterns):
-                    license_blocked += 1
-                    continue
-                norm = normalized_text(example)
-                if norm in contamination or any(term and term in norm for term in contamination if len(term) > 80):
-                    contaminated += 1
-                    continue
-                if near_dedup_enabled:
-                    sig = minhash_signature(shingles(norm))
-                    if any(jaccard_from_signatures(sig, prev) >= near_dedup_threshold for prev in signatures):
-                        near_duplicate += 1
+        if fast_row_mode:
+            if blocked_license_patterns:
+                raise ValueError("Fast row curation does not support blocked license filtering.")
+            if contamination:
+                raise ValueError("Fast row curation does not support contamination filtering.")
+            if min_quality > 0:
+                raise ValueError("Fast row curation does not support positive --min-quality.")
+            for input_path in input_paths:
+                for line in tqdm(_iter_jsonl_lines(input_path), desc=f"curate/{Path(input_path).name}", unit="row"):
+                    before += 1
+                    h = hashlib.sha1(line.encode("utf-8")).hexdigest()
+                    if h in seen:
+                        duplicate += 1
                         continue
-                    signatures.append(sig)
-                seen.add(h)
-                score = quality_score(example)
-                if score < min_quality:
-                    low_quality += 1
-                    continue
-                example.metadata["curation"] = {"hash": h, "quality_score": score}
-                split, split_group_key = assign_split_for_policy(example, split_policy, val_ratio, test_ratio)
-                example.metadata["curation"]["split_policy"] = split_policy
-                example.metadata["curation"]["split_group_key"] = split_group_key
-                _write_jsonl_row(handles[split], example.to_dict())
-                split_counts[split] += 1
-                split_report.add(split, split_group_key)
-                score_count += 1
-                score_sum += score
-                score_min = score if score_min is None else min(score_min, score)
-                score_max = score if score_max is None else max(score_max, score)
-                task_counts[example.task] += 1
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        invalid += 1
+                        continue
+                    seen.add(h)
+                    split_group_key = _row_split_key(row, split_policy, h)
+                    split = split_name_from_key(split_group_key, val_ratio, test_ratio)
+                    if fast_copy:
+                        _write_jsonl_line(handles[split], line)
+                    else:
+                        metadata = row.setdefault("metadata", {})
+                        metadata["curation"] = {
+                            "hash": h,
+                            "quality_score": 1.0,
+                            "split_policy": split_policy,
+                            "split_group_key": split_group_key,
+                        }
+                        _write_jsonl_row(handles[split], row, sort_keys=False)
+                    split_counts[split] += 1
+                    split_report.add(split, split_group_key)
+                    score_count += 1
+                    score_sum += 1.0
+                    score_min = 1.0 if score_min is None else min(score_min, 1.0)
+                    score_max = 1.0 if score_max is None else max(score_max, 1.0)
+                    task_counts[str(row.get("task", "unknown"))] += 1
+        else:
+            for input_path in input_paths:
+                for row in tqdm(read_jsonl(input_path), desc=f"curate/{Path(input_path).name}", unit="row"):
+                    before += 1
+                    try:
+                        example = GraphExample.from_dict(row)
+                    except Exception:
+                        invalid += 1
+                        continue
+                    h = graph_hash(example)
+                    if h in seen:
+                        duplicate += 1
+                        continue
+                    if not license_allowed(example, blocked_license_patterns):
+                        license_blocked += 1
+                        continue
+                    norm = normalized_text(example)
+                    if norm in contamination or any(term and term in norm for term in contamination if len(term) > 80):
+                        contaminated += 1
+                        continue
+                    if near_dedup_enabled:
+                        sig = minhash_signature(shingles(norm))
+                        if any(jaccard_from_signatures(sig, prev) >= near_dedup_threshold for prev in signatures):
+                            near_duplicate += 1
+                            continue
+                        signatures.append(sig)
+                    seen.add(h)
+                    score = quality_score(example) if quality_mode == "full" else 1.0
+                    if score < min_quality:
+                        low_quality += 1
+                        continue
+                    example.metadata["curation"] = {"hash": h, "quality_score": score}
+                    split, split_group_key = assign_split_for_policy(example, split_policy, val_ratio, test_ratio)
+                    example.metadata["curation"]["split_policy"] = split_policy
+                    example.metadata["curation"]["split_group_key"] = split_group_key
+                    _write_jsonl_row(handles[split], example.to_dict())
+                    split_counts[split] += 1
+                    split_report.add(split, split_group_key)
+                    score_count += 1
+                    score_sum += score
+                    score_min = score if score_min is None else min(score_min, score)
+                    score_max = score if score_max is None else max(score_max, score)
+                    task_counts[example.task] += 1
     except Exception:
         for handle in handles.values():
             handle.close()
@@ -257,6 +392,23 @@ def main() -> None:
     parser.add_argument("--blocked-license-pattern", action="append", default=[])
     parser.add_argument("--contamination", action="append", help="Text or JSONL file to filter against.")
     parser.add_argument("--split-policy", choices=["row_hash", "entity"], default="row_hash")
+    parser.add_argument(
+        "--dedup-key",
+        choices=["graph_hash", "row_hash"],
+        default="graph_hash",
+        help="Use canonical graph hashes for strict dedup or raw JSONL row hashes for fast pre-normalized corpora.",
+    )
+    parser.add_argument(
+        "--quality-mode",
+        choices=["full", "none"],
+        default="full",
+        help="Use full topology quality scoring or skip quality scoring for pre-normalized corpora.",
+    )
+    parser.add_argument(
+        "--fast-copy",
+        action="store_true",
+        help="In row-hash/no-quality mode, copy original JSONL rows to splits without injecting curation metadata.",
+    )
     args = parser.parse_args()
     summary = curate_files(
         args.input,
@@ -268,6 +420,9 @@ def main() -> None:
         blocked_license_patterns=args.blocked_license_pattern,
         contamination_paths=args.contamination,
         split_policy=args.split_policy,
+        dedup_key=args.dedup_key,
+        quality_mode=args.quality_mode,
+        fast_copy=args.fast_copy,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
 

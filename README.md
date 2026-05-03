@@ -570,7 +570,7 @@ To make the full local UniProt feature export and full local binding-affinity so
 ./scripts/run_full_biomed_annotations_affinity_training.sh
 ```
 
-The wrapper first materializes `data/local/uniprot_features.tsv` from the UniProtKB reviewed feature stream and `data/local/complex_affinity.tsv` from the local full-selected `binding_affinity_public` parquet, then graphifies both files, curates `data/processed/biomed_annotations_affinity/{train,val,test}.jsonl`, checks split integrity, and starts training. `TRAIN_PHASES=sft` trains only `config/train/biomed_annotations_affinity_250m.yaml`; `TRAIN_PHASES=gflownet_sft` or `TRAIN_PHASES=structure_dynamics_gflownet` run the corresponding GFlowNet configs. Use `PREPARE_FULL_BIOMED_SOURCES=force PREPARE_UNIPROT=force PREPARE_AFFINITY=force CURATE_DATA=force` to force a complete rebuild.
+The wrapper first materializes `data/local/uniprot_features.tsv` from the UniProtKB reviewed feature stream and `data/local/complex_affinity.tsv` from the local full-selected `binding_affinity_public` parquet, then graphifies both files, curates `data/processed/biomed_annotations_affinity/{train,val,test}.jsonl`, checks split integrity, and starts training. `TRAIN_PHASES=sft` trains only `config/train/biomed_annotations_affinity_250m.yaml`; `TRAIN_PHASES=gflownet_sft` or `TRAIN_PHASES=structure_dynamics_gflownet` run the corresponding GFlowNet configs. Use `PREPARE_FULL_BIOMED_SOURCES=force PREPARE_UNIPROT=force PREPARE_AFFINITY=force CURATE_DATA=force` to force a complete rebuild. For already graphified full local corpora, the wrapper defaults to `FAST_CURATE=1`, which uses exact raw-row deduplication, entity splitting, and direct JSONL line copying to avoid loading or rewriting the 100GB-scale graph corpus in memory.
 
 For sequence/function-description alignment, use the sequence-only kinds:
 
@@ -763,6 +763,18 @@ PREPARE_FULL_BIOMED_SOURCES=0 \
 PREPARE_UNIPROT=force \
 PREPARE_AFFINITY=force \
 CURATE_DATA=force \
+TRAIN_PHASES=all \
+./scripts/run_full_biomed_annotations_affinity_training.sh
+```
+
+If `data/processed/uniprot_features_local_export/all.jsonl` and `data/processed/biomolecular_complex_affinity_local/all.jsonl` already exist and you want to resume directly at fast curation plus training:
+
+```bash
+PREPARE_FULL_BIOMED_SOURCES=0 \
+PREPARE_UNIPROT=0 \
+PREPARE_AFFINITY=0 \
+CURATE_DATA=force \
+FAST_CURATE=1 \
 TRAIN_PHASES=all \
 ./scripts/run_full_biomed_annotations_affinity_training.sh
 ```
