@@ -76,7 +76,7 @@ The current local biomed source set is fully materialized as local TSV plus grap
 - `data/processed/uniprot_features_local_export/all.jsonl`: graphified UniProt feature rows, about 36 GB.
 - `data/processed/biomolecular_complex_affinity_local/all.jsonl`: graphified complex-affinity rows, about 66 GB.
 
-Together this is 2,411,356 trainable data rows before curation and any exact duplicate removal. The full wrapper should normally be resumed from the graph JSONL files with `FAST_CURATE=1` once those files exist. That path performs exact raw-row deduplication, entity splitting, and direct JSONL line copying, which avoids the previous failure mode where curation attempted to hold the entire 100 GB-scale graph corpus in memory.
+Together this is 2,411,356 trainable data rows before curation and any exact duplicate removal. The full wrapper should normally be resumed from the graph JSONL files with `FAST_CURATE=1` and `RESUME_CURATE=1` once those files exist. That path performs exact raw-row deduplication, entity splitting, direct JSONL line copying, and resumable temp split/state writes, which avoids the previous failure mode where curation attempted to hold the entire 100 GB-scale graph corpus in memory and avoids losing all curation progress after an interruption.
 
 The full public selected corpus remains available at `data/processed/real_full_selected_mix/` with 7,328,008 rows across its original train, validation, and test files. When `INCLUDE_ORIGINAL_FULL_SELECTED=1`, the direct wrapper adds all three original split files to the UniProt feature and biomolecular-affinity graph files, then recures the combined corpus into `data/processed/biomed_annotations_affinity_plus_original_full_selected/`. That combined input is 9,739,364 rows before exact duplicate removal and is the correct mode when the goal is "the original dataset also, with all of the data."
 
@@ -140,6 +140,7 @@ PREPARE_UNIPROT=0 \
 PREPARE_AFFINITY=0 \
 CURATE_DATA=force \
 FAST_CURATE=1 \
+RESUME_CURATE=1 \
 TRAIN_PHASES=all \
 ./scripts/run_full_biomed_annotations_affinity_training.sh
 ```
@@ -152,6 +153,7 @@ PREPARE_UNIPROT=0 \
 PREPARE_AFFINITY=0 \
 CURATE_DATA=force \
 FAST_CURATE=1 \
+RESUME_CURATE=1 \
 INCLUDE_ORIGINAL_FULL_SELECTED=1 \
 TRAIN_PHASES=all \
 ./scripts/run_full_biomed_annotations_affinity_training.sh

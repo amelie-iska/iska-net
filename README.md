@@ -570,7 +570,7 @@ To make the full local UniProt feature export and full local binding-affinity so
 ./scripts/run_full_biomed_annotations_affinity_training.sh
 ```
 
-The wrapper first materializes `data/local/uniprot_features.tsv` from the UniProtKB reviewed feature stream and `data/local/complex_affinity.tsv` from the local full-selected `binding_affinity_public` parquet, then graphifies both files, curates `data/processed/biomed_annotations_affinity/{train,val,test}.jsonl`, checks split integrity, and starts training. `TRAIN_PHASES=sft` trains only `config/train/biomed_annotations_affinity_250m.yaml`; `TRAIN_PHASES=gflownet_sft` or `TRAIN_PHASES=structure_dynamics_gflownet` run the corresponding GFlowNet configs. Use `PREPARE_FULL_BIOMED_SOURCES=force PREPARE_UNIPROT=force PREPARE_AFFINITY=force CURATE_DATA=force` to force a complete rebuild. For already graphified full local corpora, the wrapper defaults to `FAST_CURATE=1`, which uses exact raw-row deduplication, entity splitting, and direct JSONL line copying to avoid loading or rewriting the 100GB-scale graph corpus in memory.
+The wrapper first materializes `data/local/uniprot_features.tsv` from the UniProtKB reviewed feature stream and `data/local/complex_affinity.tsv` from the local full-selected `binding_affinity_public` parquet, then graphifies both files, curates `data/processed/biomed_annotations_affinity/{train,val,test}.jsonl`, checks split integrity, and starts training. `TRAIN_PHASES=sft` trains only `config/train/biomed_annotations_affinity_250m.yaml`; `TRAIN_PHASES=gflownet_sft` or `TRAIN_PHASES=structure_dynamics_gflownet` run the corresponding GFlowNet configs. Use `PREPARE_FULL_BIOMED_SOURCES=force PREPARE_UNIPROT=force PREPARE_AFFINITY=force CURATE_DATA=force` to force a complete rebuild. For already graphified full local corpora, the wrapper defaults to `FAST_CURATE=1` and `RESUME_CURATE=1`, which use exact raw-row deduplication, entity splitting, direct JSONL line copying, and resumable temp split/state files so interrupted curation can continue instead of starting over.
 
 To include the original full selected public corpus as well, set `INCLUDE_ORIGINAL_FULL_SELECTED=1`. This appends `data/processed/real_full_selected_mix/{train,val,test}.jsonl` to the UniProt feature and biomolecular-affinity graph files, writes the combined curated corpus to `data/processed/biomed_annotations_affinity_plus_original_full_selected/`, and trains under `outputs/biomed_annotations_affinity_plus_original_250m/` by default:
 
@@ -580,6 +580,7 @@ PREPARE_UNIPROT=0 \
 PREPARE_AFFINITY=0 \
 CURATE_DATA=force \
 FAST_CURATE=1 \
+RESUME_CURATE=1 \
 INCLUDE_ORIGINAL_FULL_SELECTED=1 \
 TRAIN_PHASES=all \
 ./scripts/run_full_biomed_annotations_affinity_training.sh
@@ -802,12 +803,13 @@ PREPARE_UNIPROT=0 \
 PREPARE_AFFINITY=0 \
 CURATE_DATA=force \
 FAST_CURATE=1 \
+RESUME_CURATE=1 \
 INCLUDE_ORIGINAL_FULL_SELECTED=1 \
 TRAIN_PHASES=all \
 ./scripts/run_full_biomed_annotations_affinity_training.sh
 ```
 
-Fast curation should finish in about one hour on the current machine for the biomed-only corpus. The combined-original mode reads the 7.33M-row `real_full_selected_mix` corpus too, so budget several hours for curation and integrity checking before training. Full SFT is one full epoch over the curated corpus, about 60k optimizer steps for biomed-only or about 240k optimizer steps for combined-original mode with the default effective batch of 36, followed by the two 3k-step GFlowNet phases.
+Fast curation should finish in about one hour on the current machine for the biomed-only corpus. The combined-original mode reads the 7.33M-row `real_full_selected_mix` corpus too, so budget several hours for curation and integrity checking before training. If curation is interrupted, rerun the same command with `RESUME_CURATE=1` and it will reuse `.train.jsonl.tmp`, `.val.jsonl.tmp`, `.test.jsonl.tmp`, and `.curate_resume_state.json` in the output directory. Full SFT is one full epoch over the curated corpus, about 60k optimizer steps for biomed-only or about 240k optimizer steps for combined-original mode with the default effective batch of 36, followed by the two 3k-step GFlowNet phases.
 
 The oracle-dynamics 250M wrapper above defaults to `FULL_TRAIN_BATCH_SIZE=1`, `FULL_TRAIN_GRAD_ACCUM=36`, `ENABLE_TROPICAL_ATTENTION=1`, `ENABLE_UMA_COORDINATE_HEAD=1`, and `EXTRA_TRAIN_CONFIGS+=config/train/overrides/uma_contact_geometry_loss.yaml`. It is intentionally conservative for a 24GB RTX 4090. After a stable run, try:
 

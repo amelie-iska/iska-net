@@ -161,6 +161,7 @@ PREPARE_UNIPROT=0 \
 PREPARE_AFFINITY=0 \
 CURATE_DATA=force \
 FAST_CURATE=1 \
+RESUME_CURATE=1 \
 INCLUDE_ORIGINAL_FULL_SELECTED=1 \
 TRAIN_PHASES=all \
 ./scripts/run_full_biomed_annotations_affinity_training.sh

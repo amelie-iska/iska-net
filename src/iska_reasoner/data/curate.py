@@ -152,6 +152,77 @@ def _iter_jsonl_lines(path: str | Path):
                 yield line
 
 
+def _curate_resume_path(output_dir: Path) -> Path:
+    return output_dir / ".curate_resume_state.json"
+
+
+def _curate_resume_config(
+    input_paths: list[str | Path],
+    val_ratio: float,
+    test_ratio: float,
+    split_policy: str,
+    dedup_key: str,
+    quality_mode: str,
+    fast_copy: bool,
+) -> dict[str, Any]:
+    return {
+        "input_paths": [str(Path(path)) for path in input_paths],
+        "val_ratio": val_ratio,
+        "test_ratio": test_ratio,
+        "split_policy": split_policy,
+        "dedup_key": dedup_key,
+        "quality_mode": quality_mode,
+        "fast_copy": fast_copy,
+    }
+
+
+def _load_curate_resume_state(path: Path, config: dict[str, Any]) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if state.get("version") != 1 or state.get("config") != config:
+        return None
+    return state
+
+
+def _write_curate_resume_state(
+    path: Path,
+    config: dict[str, Any],
+    processed_rows: dict[str, int],
+    counters: dict[str, int],
+) -> None:
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "config": config,
+                "processed_rows": processed_rows,
+                "counters": counters,
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+
+
+def _load_fast_resume_outputs(temp_paths: dict[str, Path]) -> tuple[set[str], dict[str, int]]:
+    seen: set[str] = set()
+    split_counts = {split: 0 for split in temp_paths}
+    for split, path in temp_paths.items():
+        if not path.exists():
+            continue
+        for line in _iter_jsonl_lines(path):
+            seen.add(hashlib.sha1(line.encode("utf-8")).hexdigest())
+            split_counts[split] += 1
+    return seen, split_counts
+
+
 def _metadata_first(metadata: dict[str, Any], *keys: str) -> str:
     for key in keys:
         value = metadata.get(key)
@@ -231,6 +302,8 @@ def curate_files(
     dedup_key: str = "graph_hash",
     quality_mode: str = "full",
     fast_copy: bool = False,
+    resume: bool = False,
+    resume_state_every: int = 10000,
 ) -> dict[str, Any]:
     output_dir = ensure_dir(output_dir)
     seen: set[str] = set()
@@ -256,12 +329,69 @@ def curate_files(
     fast_row_mode = dedup_key == "row_hash" and quality_mode == "none" and not near_dedup_enabled
     if fast_copy and not fast_row_mode:
         raise ValueError("--fast-copy requires --dedup-key row_hash, --quality-mode none, and near-dedup disabled")
+    if resume and not fast_row_mode:
+        raise ValueError("--resume is supported only in row-hash/no-quality fast curation mode")
 
     temp_paths = {split: output_dir / f".{split}.jsonl.tmp" for split in split_counts}
+    resume_path = _curate_resume_path(output_dir)
+    resume_config = _curate_resume_config(
+        input_paths,
+        val_ratio,
+        test_ratio,
+        split_policy,
+        dedup_key,
+        quality_mode,
+        fast_copy,
+    )
+    resume_state = _load_curate_resume_state(resume_path, resume_config) if resume else None
+    processed_rows = {str(Path(path)): 0 for path in input_paths}
+    resume_outputs_exist = False
+    if resume_state is not None:
+        processed_rows.update({str(key): int(value) for key, value in resume_state.get("processed_rows", {}).items()})
+        counters = resume_state.get("counters", {})
+        before = int(counters.get("input_rows", 0))
+        invalid = int(counters.get("invalid_rows", 0))
+        duplicate = int(counters.get("duplicates_removed", 0))
+        near_duplicate = int(counters.get("near_duplicates_removed", 0))
+        low_quality = int(counters.get("low_quality_removed", 0))
+        license_blocked = int(counters.get("license_blocked", 0))
+        contaminated = int(counters.get("contamination_removed", 0))
+        seen, split_counts = _load_fast_resume_outputs(temp_paths)
+        score_count = sum(split_counts.values())
+        score_sum = float(score_count)
+        score_min = 1.0 if score_count else None
+        score_max = 1.0 if score_count else None
+    elif resume and fast_row_mode and any(path.exists() and path.stat().st_size > 0 for path in temp_paths.values()):
+        seen, split_counts = _load_fast_resume_outputs(temp_paths)
+        resume_outputs_exist = bool(seen)
+        score_count = sum(split_counts.values())
+        score_sum = float(score_count)
+        score_min = 1.0 if score_count else None
+        score_max = 1.0 if score_count else None
     handles: dict[str, TextIO] = {}
+
+    def save_resume_state() -> None:
+        if not resume or not fast_row_mode:
+            return
+        _write_curate_resume_state(
+            resume_path,
+            resume_config,
+            processed_rows,
+            {
+                "input_rows": before,
+                "invalid_rows": invalid,
+                "duplicates_removed": duplicate,
+                "near_duplicates_removed": near_duplicate,
+                "low_quality_removed": low_quality,
+                "license_blocked": license_blocked,
+                "contamination_removed": contaminated,
+            },
+        )
+
     try:
         for split, temp_path in temp_paths.items():
-            handles[split] = temp_path.open("w", encoding="utf-8")
+            mode = "a" if resume_state is not None or resume_outputs_exist else "w"
+            handles[split] = temp_path.open(mode, encoding="utf-8")
 
         if fast_row_mode:
             if blocked_license_patterns:
@@ -271,16 +401,27 @@ def curate_files(
             if min_quality > 0:
                 raise ValueError("Fast row curation does not support positive --min-quality.")
             for input_path in input_paths:
+                input_key = str(Path(input_path))
+                skip_rows = processed_rows.get(input_key, 0) if resume_state is not None else 0
+                rows_seen_for_input = 0
                 for line in tqdm(_iter_jsonl_lines(input_path), desc=f"curate/{Path(input_path).name}", unit="row"):
+                    rows_seen_for_input += 1
+                    if rows_seen_for_input <= skip_rows:
+                        continue
                     before += 1
+                    processed_rows[input_key] = rows_seen_for_input
                     h = hashlib.sha1(line.encode("utf-8")).hexdigest()
                     if h in seen:
                         duplicate += 1
+                        if before % resume_state_every == 0:
+                            save_resume_state()
                         continue
                     try:
                         row = json.loads(line)
                     except json.JSONDecodeError:
                         invalid += 1
+                        if before % resume_state_every == 0:
+                            save_resume_state()
                         continue
                     seen.add(h)
                     split_group_key = _row_split_key(row, split_policy, h)
@@ -303,6 +444,10 @@ def curate_files(
                     score_min = 1.0 if score_min is None else min(score_min, 1.0)
                     score_max = 1.0 if score_max is None else max(score_max, 1.0)
                     task_counts[str(row.get("task", "unknown"))] += 1
+                    if before % resume_state_every == 0:
+                        save_resume_state()
+                processed_rows[input_key] = rows_seen_for_input
+                save_resume_state()
         else:
             for input_path in input_paths:
                 for row in tqdm(read_jsonl(input_path), desc=f"curate/{Path(input_path).name}", unit="row"):
@@ -349,8 +494,11 @@ def curate_files(
     except Exception:
         for handle in handles.values():
             handle.close()
-        for temp_path in temp_paths.values():
-            temp_path.unlink(missing_ok=True)
+        if resume and fast_row_mode:
+            save_resume_state()
+        else:
+            for temp_path in temp_paths.values():
+                temp_path.unlink(missing_ok=True)
         raise
     else:
         for handle in handles.values():
@@ -358,6 +506,7 @@ def curate_files(
         for split, temp_path in temp_paths.items():
             temp_path.replace(output_dir / f"{split}.jsonl")
             _cleanup_split_indexes(output_dir, split)
+        resume_path.unlink(missing_ok=True)
 
     summary = {
         "input_rows": before,
@@ -409,6 +558,17 @@ def main() -> None:
         action="store_true",
         help="In row-hash/no-quality mode, copy original JSONL rows to splits without injecting curation metadata.",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume interrupted row-hash/no-quality curation from temp split files and a progress state file.",
+    )
+    parser.add_argument(
+        "--resume-state-every",
+        type=int,
+        default=10000,
+        help="Write resumable fast-curation progress after this many input rows.",
+    )
     args = parser.parse_args()
     summary = curate_files(
         args.input,
@@ -423,6 +583,8 @@ def main() -> None:
         dedup_key=args.dedup_key,
         quality_mode=args.quality_mode,
         fast_copy=args.fast_copy,
+        resume=args.resume,
+        resume_state_every=args.resume_state_every,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
 

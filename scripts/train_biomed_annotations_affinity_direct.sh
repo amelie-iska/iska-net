@@ -40,6 +40,8 @@ PREPARE_UNIPROT="${PREPARE_UNIPROT:-auto}"
 PREPARE_AFFINITY="${PREPARE_AFFINITY:-auto}"
 CURATE_DATA="${CURATE_DATA:-auto}"
 FAST_CURATE="${FAST_CURATE:-1}"
+RESUME_CURATE="${RESUME_CURATE:-1}"
+CURATE_RESUME_STATE_EVERY="${CURATE_RESUME_STATE_EVERY:-10000}"
 VAL_RATIO="${VAL_RATIO:-0.05}"
 TEST_RATIO="${TEST_RATIO:-0.05}"
 SPLIT_POLICY="${SPLIT_POLICY:-entity}"
@@ -352,6 +354,9 @@ if [[ "$needs_curation" == "1" ]]; then
   curate_args=(python scripts/curate_data.py --output-dir "$DATA_DIR" --val-ratio "$VAL_RATIO" --test-ratio "$TEST_RATIO" --split-policy "$SPLIT_POLICY")
   if [[ "$FAST_CURATE" == "1" || "$FAST_CURATE" == "true" || "$FAST_CURATE" == "yes" ]]; then
     curate_args+=(--dedup-key row_hash --quality-mode none --fast-copy)
+    if [[ "$RESUME_CURATE" == "1" || "$RESUME_CURATE" == "true" || "$RESUME_CURATE" == "yes" ]]; then
+      curate_args+=(--resume --resume-state-every "$CURATE_RESUME_STATE_EVERY")
+    fi
   fi
   for graph in "${INPUT_GRAPHS[@]}"; do
     curate_args+=(--input "$graph")
