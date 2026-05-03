@@ -229,10 +229,13 @@ def _rdkit_scaffold(smiles: str) -> str:
         from rdkit.Chem.Scaffolds import MurckoScaffold
     except Exception:
         return ""
-    mol = Chem.MolFromSmiles(smiles)
-    if mol is None:
+    try:
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return ""
+        scaffold = MurckoScaffold.MurckoScaffoldSmiles(mol=mol)
+    except Exception:
         return ""
-    scaffold = MurckoScaffold.MurckoScaffoldSmiles(mol=mol)
     return scaffold or ""
 
 

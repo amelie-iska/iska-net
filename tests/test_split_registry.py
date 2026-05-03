@@ -1,4 +1,6 @@
-from iska_reasoner.data.splits import assign_split_for_policy, scientific_split_key
+import pytest
+
+from iska_reasoner.data.splits import _molecule_key, assign_split_for_policy, scientific_split_key, stable_hash
 from iska_reasoner.graph.schema import Edge, GraphExample, Node
 
 
@@ -54,3 +56,14 @@ def test_row_hash_policy_keeps_row_level_behavior():
     split, key = assign_split_for_policy(ex, "row_hash", 0.1, 0.1)
     assert split in {"train", "val", "test"}
     assert key.startswith("row_hash:")
+
+
+def test_entity_split_falls_back_when_rdkit_scaffold_raises(monkeypatch):
+    pytest.importorskip("rdkit")
+    from rdkit.Chem.Scaffolds import MurckoScaffold
+
+    def fail_scaffold(*args, **kwargs):
+        raise RuntimeError("bad bond stereo")
+
+    monkeypatch.setattr(MurckoScaffold, "MurckoScaffoldSmiles", fail_scaffold)
+    assert _molecule_key("CCO", {}) == f"molecule:{stable_hash('CCO')}"
