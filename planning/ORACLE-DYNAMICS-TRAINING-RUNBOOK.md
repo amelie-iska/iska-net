@@ -153,6 +153,19 @@ If the graphified files already exist and are nonempty, leave `UNIPROT_FEATURES_
 TRAIN_PHASES=all ./scripts/train_biomed_annotations_affinity_direct.sh
 ```
 
+To include the original full selected public corpus in the same direct run, add `INCLUDE_ORIGINAL_FULL_SELECTED=1`. This appends `data/processed/real_full_selected_mix/train.jsonl`, `val.jsonl`, and `test.jsonl` to the UniProt and biomolecular-affinity graph files, then curates the combined corpus under `data/processed/biomed_annotations_affinity_plus_original_full_selected/`:
+
+```bash
+PREPARE_FULL_BIOMED_SOURCES=0 \
+PREPARE_UNIPROT=0 \
+PREPARE_AFFINITY=0 \
+CURATE_DATA=force \
+FAST_CURATE=1 \
+INCLUDE_ORIGINAL_FULL_SELECTED=1 \
+TRAIN_PHASES=all \
+./scripts/run_full_biomed_annotations_affinity_training.sh
+```
+
 Train the SFT GFlowNet and the structure-dynamics GFlowNet separately:
 
 ```bash

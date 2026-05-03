@@ -78,11 +78,14 @@ The current local biomed source set is fully materialized as local TSV plus grap
 
 Together this is 2,411,356 trainable data rows before curation and any exact duplicate removal. The full wrapper should normally be resumed from the graph JSONL files with `FAST_CURATE=1` once those files exist. That path performs exact raw-row deduplication, entity splitting, and direct JSONL line copying, which avoids the previous failure mode where curation attempted to hold the entire 100 GB-scale graph corpus in memory.
 
+The full public selected corpus remains available at `data/processed/real_full_selected_mix/` with 7,328,008 rows across its original train, validation, and test files. When `INCLUDE_ORIGINAL_FULL_SELECTED=1`, the direct wrapper adds all three original split files to the UniProt feature and biomolecular-affinity graph files, then recures the combined corpus into `data/processed/biomed_annotations_affinity_plus_original_full_selected/`. That combined input is 9,739,364 rows before exact duplicate removal and is the correct mode when the goal is "the original dataset also, with all of the data."
+
 Expected runtime on the current 24 GB RTX 4090 workstation:
 
 - fast curation from completed graph JSONL: about one hour at roughly 600 rows/sec after warmup;
+- fast curation with the original full selected corpus included: several hours, because it reads about 187 GB of JSONL before writing the new curated splits;
 - split integrity scan: minutes, dominated by reading the curated JSONL;
-- 250M SFT full epoch: about 60k optimizer steps with effective batch 36, usually 1-3 days depending on step time;
+- 250M SFT full epoch: about 60k optimizer steps for biomed-only or about 240k optimizer steps for combined-original mode with effective batch 36, usually multi-day on one RTX 4090 depending on step time;
 - SFT GFlowNet and structure-dynamics GFlowNet: 3k steps each by default, shorter than the SFT phase.
 
 ## Commands
@@ -137,6 +140,19 @@ PREPARE_UNIPROT=0 \
 PREPARE_AFFINITY=0 \
 CURATE_DATA=force \
 FAST_CURATE=1 \
+TRAIN_PHASES=all \
+./scripts/run_full_biomed_annotations_affinity_training.sh
+```
+
+Resume from completed graph JSONL and include the original full selected public corpus in the same train/validation/test curation:
+
+```bash
+PREPARE_FULL_BIOMED_SOURCES=0 \
+PREPARE_UNIPROT=0 \
+PREPARE_AFFINITY=0 \
+CURATE_DATA=force \
+FAST_CURATE=1 \
+INCLUDE_ORIGINAL_FULL_SELECTED=1 \
 TRAIN_PHASES=all \
 ./scripts/run_full_biomed_annotations_affinity_training.sh
 ```

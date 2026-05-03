@@ -572,7 +572,20 @@ To make the full local UniProt feature export and full local binding-affinity so
 
 The wrapper first materializes `data/local/uniprot_features.tsv` from the UniProtKB reviewed feature stream and `data/local/complex_affinity.tsv` from the local full-selected `binding_affinity_public` parquet, then graphifies both files, curates `data/processed/biomed_annotations_affinity/{train,val,test}.jsonl`, checks split integrity, and starts training. `TRAIN_PHASES=sft` trains only `config/train/biomed_annotations_affinity_250m.yaml`; `TRAIN_PHASES=gflownet_sft` or `TRAIN_PHASES=structure_dynamics_gflownet` run the corresponding GFlowNet configs. Use `PREPARE_FULL_BIOMED_SOURCES=force PREPARE_UNIPROT=force PREPARE_AFFINITY=force CURATE_DATA=force` to force a complete rebuild. For already graphified full local corpora, the wrapper defaults to `FAST_CURATE=1`, which uses exact raw-row deduplication, entity splitting, and direct JSONL line copying to avoid loading or rewriting the 100GB-scale graph corpus in memory.
 
-The current full local biomed source set contains 2,411,356 data rows: 574,627 UniProt feature rows and 1,836,729 biomolecular complex-affinity rows. The corresponding graph JSONL files are about 36 GB and 66 GB before train/validation/test curation. On the current workstation, fast curation of the completed graph JSONL runs at roughly 600 rows/sec after warmup, so the full 2.41M-row curation pass is about one hour. The 250M SFT phase is the long part: with effective batch 36 it is about 60k optimizer steps for one full epoch, so expect roughly 1-3 days on a single 24 GB RTX 4090 depending on observed step time. The two GFlowNet follow-up phases are capped at 3k steps each by their configs.
+To include the original full selected public corpus as well, set `INCLUDE_ORIGINAL_FULL_SELECTED=1`. This appends `data/processed/real_full_selected_mix/{train,val,test}.jsonl` to the UniProt feature and biomolecular-affinity graph files, writes the combined curated corpus to `data/processed/biomed_annotations_affinity_plus_original_full_selected/`, and trains under `outputs/biomed_annotations_affinity_plus_original_250m/` by default:
+
+```bash
+PREPARE_FULL_BIOMED_SOURCES=0 \
+PREPARE_UNIPROT=0 \
+PREPARE_AFFINITY=0 \
+CURATE_DATA=force \
+FAST_CURATE=1 \
+INCLUDE_ORIGINAL_FULL_SELECTED=1 \
+TRAIN_PHASES=all \
+./scripts/run_full_biomed_annotations_affinity_training.sh
+```
+
+The current full local biomed source set contains 2,411,356 data rows: 574,627 UniProt feature rows and 1,836,729 biomolecular complex-affinity rows. The original full selected public graph corpus contains 7,328,008 rows across its train/validation/test splits. With `INCLUDE_ORIGINAL_FULL_SELECTED=1`, the combined curation input is 9,739,364 rows before exact duplicate removal. The local biomed graph JSONL files are about 36 GB and 66 GB before train/validation/test curation; the original full selected graph JSONL adds about 85 GB. On the current workstation, fast curation of the 2.41M-row biomed-only corpus is about one hour, while the combined 9.74M-row corpus should be budgeted for several hours because it reads about 187 GB of JSONL before writing the new curated splits. The 250M SFT phase is the long part: with effective batch 36, biomed-only is about 60k optimizer steps and the combined corpus is about 240k optimizer steps for one full epoch, so expect a multi-day single-GPU run. The two GFlowNet follow-up phases are capped at 3k steps each by their configs.
 
 For sequence/function-description alignment, use the sequence-only kinds:
 
@@ -756,7 +769,7 @@ Direct UniProt plus biomolecular-affinity training, with full local source prepa
 ./scripts/run_full_biomed_annotations_affinity_training.sh
 ```
 
-This uses `config/model/ugm_250m_tokengt.yaml`, `config/data/biomed_annotations_affinity_250m.yaml`, `config/train/biomed_annotations_affinity_250m.yaml`, `config/train/biomed_annotations_affinity_gflownet_sft_4090.yaml`, and `config/train/biomed_annotations_affinity_structure_dynamics_gflownet_4090.yaml`. It defaults to hybrid Flash/MHTA plus UMA coordinate and internal-coordinate heads. The full local source set is 2,411,356 data rows: 574,627 UniProt feature rows plus 1,836,729 biomolecular complex-affinity rows.
+This uses `config/model/ugm_250m_tokengt.yaml`, `config/data/biomed_annotations_affinity_250m.yaml`, `config/train/biomed_annotations_affinity_250m.yaml`, `config/train/biomed_annotations_affinity_gflownet_sft_4090.yaml`, and `config/train/biomed_annotations_affinity_structure_dynamics_gflownet_4090.yaml`. It defaults to hybrid Flash/MHTA plus UMA coordinate and internal-coordinate heads. The full local source set is 2,411,356 data rows: 574,627 UniProt feature rows plus 1,836,729 biomolecular complex-affinity rows. Add `INCLUDE_ORIGINAL_FULL_SELECTED=1` to include the original 7,328,008-row selected public corpus in the same curated training dataset.
 
 If `data/local/uniprot_features.tsv` and `data/local/complex_affinity.tsv` already exist and you only want to rebuild graphification/curation before training:
 
@@ -781,7 +794,20 @@ TRAIN_PHASES=all \
 ./scripts/run_full_biomed_annotations_affinity_training.sh
 ```
 
-Fast curation should finish in about one hour on the current machine. Full SFT is one full epoch over the curated corpus, about 60k optimizer steps with the default effective batch of 36. Plan for a 1-3 day single-GPU run for SFT, followed by the two 3k-step GFlowNet phases.
+To train on the original full selected corpus plus the new UniProt feature and biomolecular-affinity rows:
+
+```bash
+PREPARE_FULL_BIOMED_SOURCES=0 \
+PREPARE_UNIPROT=0 \
+PREPARE_AFFINITY=0 \
+CURATE_DATA=force \
+FAST_CURATE=1 \
+INCLUDE_ORIGINAL_FULL_SELECTED=1 \
+TRAIN_PHASES=all \
+./scripts/run_full_biomed_annotations_affinity_training.sh
+```
+
+Fast curation should finish in about one hour on the current machine for the biomed-only corpus. The combined-original mode reads the 7.33M-row `real_full_selected_mix` corpus too, so budget several hours for curation and integrity checking before training. Full SFT is one full epoch over the curated corpus, about 60k optimizer steps for biomed-only or about 240k optimizer steps for combined-original mode with the default effective batch of 36, followed by the two 3k-step GFlowNet phases.
 
 The oracle-dynamics 250M wrapper above defaults to `FULL_TRAIN_BATCH_SIZE=1`, `FULL_TRAIN_GRAD_ACCUM=36`, `ENABLE_TROPICAL_ATTENTION=1`, `ENABLE_UMA_COORDINATE_HEAD=1`, and `EXTRA_TRAIN_CONFIGS+=config/train/overrides/uma_contact_geometry_loss.yaml`. It is intentionally conservative for a 24GB RTX 4090. After a stable run, try:
 

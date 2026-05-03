@@ -144,6 +144,8 @@ Biomedical/bioactivity metrics:
 - `biomed/uniprot_feature_row_count`: count of UniProt feature rows in the local full biomed source set. Current full local source: 574,627 data rows.
 - `biomed/complex_affinity_row_count`: count of biomolecular complex-affinity rows in the local full biomed source set. Current full local source: 1,836,729 data rows.
 - `biomed/full_local_row_count`: combined full local UniProt feature plus complex-affinity corpus size before curation. Current full local source: 2,411,356 data rows.
+- `biomed/original_full_selected_row_count`: count of rows imported from `data/processed/real_full_selected_mix/{train,val,test}.jsonl` when `INCLUDE_ORIGINAL_FULL_SELECTED=1`. Current original selected public corpus: 7,328,008 rows.
+- `biomed/full_local_plus_original_row_count`: combined curation input size for UniProt features, biomolecular-complex affinity, and the original full selected public corpus before exact duplicate removal. Current combined target: 9,739,364 rows.
 - `biomed/fast_curation_rows_per_second`: rows/sec during `FAST_CURATE=1` direct JSONL curation from completed graph files.
 
 UGM multimodal metrics:

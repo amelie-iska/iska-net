@@ -15,7 +15,18 @@ DATA_CONFIG="${DATA_CONFIG:-config/data/biomed_annotations_affinity_250m.yaml}"
 TRAIN_CONFIG="${TRAIN_CONFIG:-config/train/biomed_annotations_affinity_250m.yaml}"
 WANDB_CONFIG="${WANDB_CONFIG:-config/train/overrides/wandb_online.yaml}"
 
+INCLUDE_ORIGINAL_FULL_SELECTED="${INCLUDE_ORIGINAL_FULL_SELECTED:-0}"
+case "$(printf '%s' "$INCLUDE_ORIGINAL_FULL_SELECTED" | tr '[:upper:]' '[:lower:]')" in
+  1|true|yes|on) INCLUDE_ORIGINAL_FULL_SELECTED=1 ;;
+  *) INCLUDE_ORIGINAL_FULL_SELECTED=0 ;;
+esac
+DATA_DIR_WAS_SET="${DATA_DIR+x}"
 DATA_DIR="${DATA_DIR:-data/processed/biomed_annotations_affinity}"
+if [[ "$INCLUDE_ORIGINAL_FULL_SELECTED" == "1" && -z "$DATA_DIR_WAS_SET" ]]; then
+  DATA_DIR="data/processed/biomed_annotations_affinity_plus_original_full_selected"
+fi
+ORIGINAL_FULL_SELECTED_DIR="${ORIGINAL_FULL_SELECTED_DIR:-data/processed/real_full_selected_mix}"
+ORIGINAL_FULL_SELECTED_SPLITS="${ORIGINAL_FULL_SELECTED_SPLITS:-train val test}"
 UNIPROT_GRAPH_JSONL="${UNIPROT_GRAPH_JSONL:-data/processed/uniprot_features_local_export/all.jsonl}"
 AFFINITY_GRAPH_JSONL="${AFFINITY_GRAPH_JSONL:-data/processed/biomolecular_complex_affinity_local/all.jsonl}"
 DEFAULT_UNIPROT_FEATURES_INPUT="$ROOT/data/local/uniprot_features.tsv"
@@ -36,6 +47,9 @@ LIMIT_UNIPROT="${LIMIT_UNIPROT:-}"
 LIMIT_AFFINITY="${LIMIT_AFFINITY:-}"
 
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/biomed_annotations_affinity_250m}"
+if [[ "$INCLUDE_ORIGINAL_FULL_SELECTED" == "1" && "$OUTPUT_DIR" == "outputs/biomed_annotations_affinity_250m" ]]; then
+  OUTPUT_DIR="outputs/biomed_annotations_affinity_plus_original_250m"
+fi
 VOCAB_PATH="${VOCAB_PATH:-$OUTPUT_DIR/vocab.jsonl}"
 REUSE_VOCAB="${REUSE_VOCAB:-auto}"
 SKIP_POLICY_CHECK="${SKIP_POLICY_CHECK:-0}"
@@ -56,6 +70,24 @@ GFLOWNET_SFT_CONFIG="${GFLOWNET_SFT_CONFIG:-config/train/biomed_annotations_affi
 GFLOWNET_SFT_VALIDATION_CONFIG="${GFLOWNET_SFT_VALIDATION_CONFIG:-config/validate/biomed_annotations_affinity_gflownet_sft_validation.yaml}"
 STRUCTURE_DYNAMICS_GFLOWNET_CONFIG="${STRUCTURE_DYNAMICS_GFLOWNET_CONFIG:-config/train/biomed_annotations_affinity_structure_dynamics_gflownet_4090.yaml}"
 STRUCTURE_DYNAMICS_GFLOWNET_VALIDATION_CONFIG="${STRUCTURE_DYNAMICS_GFLOWNET_VALIDATION_CONFIG:-config/validate/biomed_annotations_affinity_structure_dynamics_gflownet_validation.yaml}"
+GFLOWNET_SFT_OUTPUT_DIR="${GFLOWNET_SFT_OUTPUT_DIR:-outputs/biomed_annotations_affinity_gflownet_sft_4090}"
+STRUCTURE_DYNAMICS_GFLOWNET_OUTPUT_DIR="${STRUCTURE_DYNAMICS_GFLOWNET_OUTPUT_DIR:-outputs/biomed_annotations_affinity_structure_dynamics_gflownet_4090}"
+GFLOWNET_SFT_STAGE_NAME="${GFLOWNET_SFT_STAGE_NAME:-gflownet_sft}"
+STRUCTURE_DYNAMICS_GFLOWNET_STAGE_NAME="${STRUCTURE_DYNAMICS_GFLOWNET_STAGE_NAME:-structure_dynamics_gflownet}"
+if [[ "$INCLUDE_ORIGINAL_FULL_SELECTED" == "1" ]]; then
+  if [[ "$GFLOWNET_SFT_OUTPUT_DIR" == "outputs/biomed_annotations_affinity_gflownet_sft_4090" ]]; then
+    GFLOWNET_SFT_OUTPUT_DIR="outputs/biomed_annotations_affinity_plus_original_gflownet_sft_4090"
+  fi
+  if [[ "$STRUCTURE_DYNAMICS_GFLOWNET_OUTPUT_DIR" == "outputs/biomed_annotations_affinity_structure_dynamics_gflownet_4090" ]]; then
+    STRUCTURE_DYNAMICS_GFLOWNET_OUTPUT_DIR="outputs/biomed_annotations_affinity_plus_original_structure_dynamics_gflownet_4090"
+  fi
+  if [[ "$GFLOWNET_SFT_STAGE_NAME" == "gflownet_sft" ]]; then
+    GFLOWNET_SFT_STAGE_NAME="gflownet_sft_plus_original"
+  fi
+  if [[ "$STRUCTURE_DYNAMICS_GFLOWNET_STAGE_NAME" == "structure_dynamics_gflownet" ]]; then
+    STRUCTURE_DYNAMICS_GFLOWNET_STAGE_NAME="structure_dynamics_gflownet_plus_original"
+  fi
+fi
 VALIDATION_DEVICE="${VALIDATION_DEVICE:-cuda}"
 VALIDATE_GFLOWNET="${VALIDATE_GFLOWNET:-0}"
 
@@ -70,6 +102,14 @@ TRAIN_PREFETCH_FACTOR="${TRAIN_PREFETCH_FACTOR:-4}"
 TRAIN_EVAL_EVERY="${TRAIN_EVAL_EVERY:-1000}"
 TRAIN_EVAL_MAX_BATCHES="${TRAIN_EVAL_MAX_BATCHES:-256}"
 TRAIN_CHECKPOINT_EVERY="${TRAIN_CHECKPOINT_EVERY:-1000}"
+TRAIN_STAGE_NAME="${TRAIN_STAGE_NAME:-}"
+if [[ -z "$TRAIN_STAGE_NAME" ]]; then
+  if [[ "$INCLUDE_ORIGINAL_FULL_SELECTED" == "1" ]]; then
+    TRAIN_STAGE_NAME="biomed_annotations_affinity_plus_original_sft"
+  else
+    TRAIN_STAGE_NAME="biomed_annotations_affinity_sft"
+  fi
+fi
 
 export RUN_ID
 export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
@@ -81,6 +121,9 @@ export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:T
 export WANDB_PROJECT="${WANDB_PROJECT:-iska-ugm}"
 export WANDB_GROUP="${WANDB_GROUP:-biomed-annotations-affinity-direct}"
 export WANDB_TAGS="${WANDB_TAGS:-direct,biomed,uniprot,complex-affinity,250m,hybrid-flash-mhta,uma-coordinate-head,uma-internal-coordinates}"
+if [[ "$INCLUDE_ORIGINAL_FULL_SELECTED" == "1" && "$WANDB_TAGS" != *"original-full-selected"* ]]; then
+  export WANDB_TAGS="$WANDB_TAGS,original-full-selected,combined-full"
+fi
 
 run() {
   printf '\n[%s] $' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
@@ -172,6 +215,17 @@ append_if_exists() {
   fi
 }
 
+append_required_or_dry_run() {
+  local path="$1"
+  local array_name="$2"
+  if [[ -s "$path" || "${DRY_RUN:-0}" == "1" ]]; then
+    eval "$array_name+=(\"\$path\")"
+    return 0
+  fi
+  printf 'Required graph JSONL is missing or empty: %s\n' "$path" >&2
+  return 1
+}
+
 is_placeholder_path() {
   local path="$1"
   [[ "$path" == /path/to/* || "$path" == "/absolute/path/to/"* || "$path" == *"REPLACE_ME"* || "$path" == *"replace_me"* ]]
@@ -254,6 +308,11 @@ fi
 INPUT_GRAPHS=()
 append_if_exists "$UNIPROT_GRAPH_JSONL" INPUT_GRAPHS
 append_if_exists "$AFFINITY_GRAPH_JSONL" INPUT_GRAPHS
+if [[ "$INCLUDE_ORIGINAL_FULL_SELECTED" == "1" ]]; then
+  for split in $ORIGINAL_FULL_SELECTED_SPLITS; do
+    append_required_or_dry_run "$ORIGINAL_FULL_SELECTED_DIR/$split.jsonl" INPUT_GRAPHS
+  done
+fi
 if [[ "${DRY_RUN:-0}" == "1" ]]; then
   if [[ "${#UNIPROT_INPUT_ARRAY[@]}" -gt 0 && ! " ${INPUT_GRAPHS[*]} " =~ " $UNIPROT_GRAPH_JSONL " ]]; then
     INPUT_GRAPHS+=("$UNIPROT_GRAPH_JSONL")
@@ -264,9 +323,12 @@ if [[ "${DRY_RUN:-0}" == "1" ]]; then
 fi
 
 if [[ "${#INPUT_GRAPHS[@]}" -eq 0 ]]; then
-  printf 'No prepared UniProt or affinity graph JSONL found.\n' >&2
+  printf 'No prepared UniProt, affinity, or original full-selected graph JSONL found.\n' >&2
   printf 'Set UNIPROT_FEATURES_INPUTS and/or AFFINITY_INPUTS, or create:\n' >&2
   printf '  %s\n  %s\n' "$UNIPROT_GRAPH_JSONL" "$AFFINITY_GRAPH_JSONL" >&2
+  if [[ "$INCLUDE_ORIGINAL_FULL_SELECTED" == "1" ]]; then
+    printf 'Also expected original selected splits under: %s\n' "$ORIGINAL_FULL_SELECTED_DIR" >&2
+  fi
   exit 1
 fi
 
@@ -319,7 +381,11 @@ fi
 
 OVERRIDE="$RUN_DIR/biomed_annotations_affinity_override.yaml"
 GFN_DATA_OVERRIDE="$RUN_DIR/biomed_annotations_affinity_data_override.yaml"
+GFN_SFT_OVERRIDE="$RUN_DIR/biomed_annotations_affinity_gflownet_sft_override.yaml"
+STRUCTURE_DYNAMICS_GFN_OVERRIDE="$RUN_DIR/biomed_annotations_affinity_structure_dynamics_gflownet_override.yaml"
 cat > "$OVERRIDE" <<YAML
+stage:
+  name: $TRAIN_STAGE_NAME
 run:
   output_dir: $OUTPUT_DIR
   device: $TRAIN_DEVICE
@@ -358,10 +424,23 @@ data:
   train_path: $DATA_DIR/train.jsonl
   val_path: $VAL_PATH
 YAML
+cat > "$GFN_SFT_OVERRIDE" <<YAML
+stage:
+  name: $GFLOWNET_SFT_STAGE_NAME
+run:
+  output_dir: $GFLOWNET_SFT_OUTPUT_DIR
+YAML
+cat > "$STRUCTURE_DYNAMICS_GFN_OVERRIDE" <<YAML
+stage:
+  name: $STRUCTURE_DYNAMICS_GFLOWNET_STAGE_NAME
+run:
+  output_dir: $STRUCTURE_DYNAMICS_GFLOWNET_OUTPUT_DIR
+YAML
 
 printf '[%s] Direct UniProt + affinity training\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 printf 'Run directory: %s\n' "$RUN_DIR"
 printf 'Data dir: %s\n' "$DATA_DIR"
+printf 'Include original full selected corpus: %s (%s: %s)\n' "$INCLUDE_ORIGINAL_FULL_SELECTED" "$ORIGINAL_FULL_SELECTED_DIR" "$ORIGINAL_FULL_SELECTED_SPLITS"
 printf 'Input graph files: %s\n' "${INPUT_GRAPHS[*]}"
 printf 'Train phases: %s\n' "$TRAIN_PHASES"
 printf 'Override:\n'
@@ -383,17 +462,19 @@ run_train_stage() {
 
 run_gflownet_stage() {
   local config="$1"
-  run_cx python scripts/train_stage.py --config "$DATA_CONFIG" --config "$GFN_DATA_OVERRIDE" --config "$config" --config "$WANDB_CONFIG"
+  local stage_override="$2"
+  run_cx python scripts/train_stage.py --config "$DATA_CONFIG" --config "$GFN_DATA_OVERRIDE" --config "$config" --config "$stage_override" --config "$WANDB_CONFIG"
 }
 
 validate_gflownet_stage() {
   local config="$1"
   local validation_config="$2"
+  local stage_override="$3"
   if [[ "$VALIDATE_GFLOWNET" != "1" ]]; then
     return 0
   fi
   append_config "$validation_config"
-  run_cx python scripts/validate_gflownet.py --config "$DATA_CONFIG" --config "$GFN_DATA_OVERRIDE" --config "$config" --config "$validation_config" --data "$GFN_VALIDATION_DATA" --device "$VALIDATION_DEVICE"
+  run_cx python scripts/validate_gflownet.py --config "$DATA_CONFIG" --config "$GFN_DATA_OVERRIDE" --config "$config" --config "$stage_override" --config "$validation_config" --data "$GFN_VALIDATION_DATA" --device "$VALIDATION_DEVICE"
 }
 
 IFS=',' read -r -a PHASE_ARRAY <<< "$TRAIN_PHASES"
@@ -405,22 +486,22 @@ for phase in "${PHASE_ARRAY[@]}"; do
       ;;
     gflownet_sft)
       append_config "$GFLOWNET_SFT_CONFIG"
-      run_gflownet_stage "$GFLOWNET_SFT_CONFIG"
-      validate_gflownet_stage "$GFLOWNET_SFT_CONFIG" "$GFLOWNET_SFT_VALIDATION_CONFIG"
+      run_gflownet_stage "$GFLOWNET_SFT_CONFIG" "$GFN_SFT_OVERRIDE"
+      validate_gflownet_stage "$GFLOWNET_SFT_CONFIG" "$GFLOWNET_SFT_VALIDATION_CONFIG" "$GFN_SFT_OVERRIDE"
       ;;
     structure_dynamics_gflownet)
       append_config "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG"
-      run_gflownet_stage "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG"
-      validate_gflownet_stage "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG" "$STRUCTURE_DYNAMICS_GFLOWNET_VALIDATION_CONFIG"
+      run_gflownet_stage "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG" "$STRUCTURE_DYNAMICS_GFN_OVERRIDE"
+      validate_gflownet_stage "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG" "$STRUCTURE_DYNAMICS_GFLOWNET_VALIDATION_CONFIG" "$STRUCTURE_DYNAMICS_GFN_OVERRIDE"
       ;;
     all)
       run_train_stage --config "$MODEL_CONFIG" --config "$DATA_CONFIG" --config "$TRAIN_CONFIG" --config "$OVERRIDE"
       append_config "$GFLOWNET_SFT_CONFIG"
       append_config "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG"
-      run_gflownet_stage "$GFLOWNET_SFT_CONFIG"
-      validate_gflownet_stage "$GFLOWNET_SFT_CONFIG" "$GFLOWNET_SFT_VALIDATION_CONFIG"
-      run_gflownet_stage "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG"
-      validate_gflownet_stage "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG" "$STRUCTURE_DYNAMICS_GFLOWNET_VALIDATION_CONFIG"
+      run_gflownet_stage "$GFLOWNET_SFT_CONFIG" "$GFN_SFT_OVERRIDE"
+      validate_gflownet_stage "$GFLOWNET_SFT_CONFIG" "$GFLOWNET_SFT_VALIDATION_CONFIG" "$GFN_SFT_OVERRIDE"
+      run_gflownet_stage "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG" "$STRUCTURE_DYNAMICS_GFN_OVERRIDE"
+      validate_gflownet_stage "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG" "$STRUCTURE_DYNAMICS_GFLOWNET_VALIDATION_CONFIG" "$STRUCTURE_DYNAMICS_GFN_OVERRIDE"
       ;;
     none)
       printf 'TRAIN_PHASES=none; dataset preparation and checks completed without training.\n'
