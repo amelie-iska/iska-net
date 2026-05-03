@@ -88,3 +88,19 @@ def test_dataset_integrity_accepts_matching_summary(tmp_path: Path):
     )
     result = inspect_integrity(data_dir)
     assert result["ok"] is True
+
+
+def test_dataset_integrity_reads_curated_split_sizes(tmp_path: Path):
+    data_dir = tmp_path / "graphs"
+    data_dir.mkdir()
+    (data_dir / "train.jsonl").write_text("{}\n{}\n", encoding="utf-8")
+    (data_dir / "val.jsonl").write_text("{}\n", encoding="utf-8")
+    (data_dir / "test.jsonl").write_text("{}\n", encoding="utf-8")
+    (data_dir / "summary.json").write_text(
+        json.dumps({"split_sizes": {"train": 2, "val": 1, "test": 1}}),
+        encoding="utf-8",
+    )
+    result = inspect_integrity(data_dir)
+    assert result["expected"] == {"train": 2, "val": 1, "test": 1}
+    assert result["expected_total"] == 4
+    assert result["ok"] is True

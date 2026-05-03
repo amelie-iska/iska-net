@@ -809,7 +809,16 @@ TRAIN_PHASES=all \
 ./scripts/run_full_biomed_annotations_affinity_training.sh
 ```
 
-Fast curation should finish in about one hour on the current machine for the biomed-only corpus. The combined-original mode reads the 7.33M-row `real_full_selected_mix` corpus too, so budget several hours for curation and integrity checking before training. If curation is interrupted, rerun the same command with `RESUME_CURATE=1` and it will reuse `.train.jsonl.tmp`, `.val.jsonl.tmp`, `.test.jsonl.tmp`, and `.curate_resume_state.json` in the output directory. Full SFT is one full epoch over the curated corpus, about 60k optimizer steps for biomed-only or about 240k optimizer steps for combined-original mode with the default effective batch of 36, followed by the two 3k-step GFlowNet phases.
+Fast curation should finish in about one hour on the current machine for the biomed-only corpus. The combined-original mode reads the 7.33M-row `real_full_selected_mix` corpus too, so budget several hours for curation and integrity checking before training. If curation is interrupted, rerun the same command with `RESUME_CURATE=1` and it will reuse `.train.jsonl.tmp`, `.val.jsonl.tmp`, `.test.jsonl.tmp`, and `.curate_resume_state.json` in the output directory. Resume now normalizes temporary split files before appending, so an interrupted write cannot concatenate two JSON objects onto one JSONL line. If an older interrupted run already produced that failure, repair the existing split files without rerunning curation:
+
+```bash
+conda run --no-capture-output -n tokengt python scripts/repair_jsonl_concatenation.py \
+  --path data/processed/biomed_annotations_affinity_plus_original_full_selected/train.jsonl \
+  --path data/processed/biomed_annotations_affinity_plus_original_full_selected/val.jsonl \
+  --path data/processed/biomed_annotations_affinity_plus_original_full_selected/test.jsonl
+```
+
+After repair, rerun `scripts/check_dataset_integrity.py`; it reads curated `split_sizes` as well as full-corpus `counts`. Full SFT is one full epoch over the curated corpus, about 60k optimizer steps for biomed-only or about 240k optimizer steps for combined-original mode with the default effective batch of 36, followed by the two 3k-step GFlowNet phases.
 
 The oracle-dynamics 250M wrapper above defaults to `FULL_TRAIN_BATCH_SIZE=1`, `FULL_TRAIN_GRAD_ACCUM=36`, `ENABLE_TROPICAL_ATTENTION=1`, `ENABLE_UMA_COORDINATE_HEAD=1`, and `EXTRA_TRAIN_CONFIGS+=config/train/overrides/uma_contact_geometry_loss.yaml`. It is intentionally conservative for a 24GB RTX 4090. After a stable run, try:
 

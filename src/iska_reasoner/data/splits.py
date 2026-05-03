@@ -226,16 +226,25 @@ def _molecule_key(smiles_or_selfies: str, metadata: dict[str, Any]) -> str:
 def _rdkit_scaffold(smiles: str) -> str:
     try:
         from rdkit import Chem
+        from rdkit import rdBase
         from rdkit.Chem.Scaffolds import MurckoScaffold
     except Exception:
         return ""
+    log_blocker = None
     try:
+        try:
+            log_blocker = rdBase.BlockLogs()
+        except Exception:
+            log_blocker = None
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             return ""
         scaffold = MurckoScaffold.MurckoScaffoldSmiles(mol=mol)
     except Exception:
         return ""
+    finally:
+        if log_blocker is not None:
+            del log_blocker
     return scaffold or ""
 
 

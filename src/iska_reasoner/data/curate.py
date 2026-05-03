@@ -139,6 +139,16 @@ def _write_jsonl_line(handle: TextIO, line: str) -> None:
     handle.write("\n")
 
 
+def _ensure_trailing_newline(path: Path) -> None:
+    """Make append-resume safe after an interrupted write."""
+    if not path.exists() or path.stat().st_size == 0:
+        return
+    with path.open("rb+") as handle:
+        handle.seek(-1, 2)
+        if handle.read(1) != b"\n":
+            handle.write(b"\n")
+
+
 def _cleanup_split_indexes(output_dir: Path, split: str) -> None:
     for suffix in (".offsets.u64", ".offsets.meta.json"):
         (output_dir / f"{split}.jsonl{suffix}").unlink(missing_ok=True)
@@ -391,6 +401,8 @@ def curate_files(
     try:
         for split, temp_path in temp_paths.items():
             mode = "a" if resume_state is not None or resume_outputs_exist else "w"
+            if mode == "a":
+                _ensure_trailing_newline(temp_path)
             handles[split] = temp_path.open(mode, encoding="utf-8")
 
         if fast_row_mode:

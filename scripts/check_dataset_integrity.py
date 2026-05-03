@@ -31,6 +31,9 @@ def _expected_counts(summary: dict[str, Any]) -> dict[str, int]:
     counts = summary.get("counts")
     if isinstance(counts, dict):
         return {str(split): int(counts.get(split, 0) or 0) for split in ("train", "val", "test")}
+    split_sizes = summary.get("split_sizes")
+    if isinstance(split_sizes, dict):
+        return {str(split): int(split_sizes.get(split, 0) or 0) for split in ("train", "val", "test")}
     return {split: int(summary.get(split, 0) or 0) for split in ("train", "val", "test")}
 
 
