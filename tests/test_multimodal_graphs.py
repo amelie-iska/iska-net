@@ -91,6 +91,11 @@ def test_multimodal_reference_vocab_contains_required_families():
     assert "INTERNAL_COORD_QUERY:protein_phi" in tokens
     assert "ADAPTIVE_PATCH:residue_atom_patch" in tokens
     assert "CONTACT_PATCH:hbond" in tokens
+    assert "SEQ_STRUCT_DYN_PROXY:all_atom_cartesian" in tokens
+    assert "ALL_ATOM_CARTESIAN:enabled" in tokens
+    assert "CARTESIAN_ATOM:protein:CA" in tokens
+    assert "CARTESIAN_ATOM:ligand:heavy_atom" in tokens
+    assert "CARTESIAN_FRAME:temperature_conditioned" in tokens
 
 
 def test_bioselfies_decoder_is_total_and_graph_valid():
@@ -172,6 +177,9 @@ def test_multimodal_graphification_defaults_to_sequence_only():
     assert "INTERNAL_COORD:protein_phi" in ex.target_tokens
     assert "ADAPTIVE_PATCH:residue_atom_patch" in ex.target_tokens
     assert "CONTACT_PATCH:hbond" in ex.target_tokens
+    assert "SEQ_STRUCT_DYN_PROXY:all_atom_cartesian" in ex.target_tokens
+    assert "ALL_ATOM_CARTESIAN:enabled" in ex.target_tokens
+    assert "CARTESIAN_ATOM:protein:CA" in ex.target_tokens
     assert not graph_structure_violations(ex)
     assert ex.metadata["ignored_structure_fields"]
     assert ex.metadata["temperature"] == 315.5
@@ -319,7 +327,11 @@ def test_uniprot_binding_site_and_feature_rows_become_sequence_grounded_graphs()
         "local_multimodal_graph_to_graph",
     )
     assert graph_row["task"] == "unigenx_ec_protein_generation"
+    assert "UGM:tokenizer:bioselfies" in graph_row["target_tokens"]
     assert "UNIPROT:feature:binding_site" in graph_row["target_tokens"]
+    assert "SEQ_STRUCT_DYN_PROXY:all_atom_cartesian" in graph_row["target_tokens"]
+    assert "ALL_ATOM_CARTESIAN:enabled" in graph_row["target_tokens"]
+    assert "CARTESIAN_ATOM:protein:CA" in graph_row["target_tokens"]
     assert any(tok.startswith("UNIPROT:go:") for tok in graph_row["target_tokens"])
     assert any(tok.startswith("UNIPROT:keyword:") for tok in graph_row["target_tokens"])
     assert any(node["type"] == "uniprot_feature" for node in graph_row["nodes"])
@@ -342,6 +354,9 @@ def test_biomolecular_complex_affinity_rows_support_non_ligand_complexes():
     assert "BIOMED:complex_affinity" in graph_row["target_tokens"]
     assert "COMPLEX:component:protein" in graph_row["target_tokens"]
     assert "COMPLEX:interaction:protein_protein" in graph_row["target_tokens"]
+    assert "UGM:tokenizer:bioselfies" in graph_row["target_tokens"]
+    assert "SEQ_STRUCT_DYN_PROXY:input:protein" in graph_row["target_tokens"]
+    assert "CARTESIAN_ATOM:protein:CA" in graph_row["target_tokens"]
     assert any(tok.startswith("AFFINITY:Kd:12") for tok in graph_row["target_tokens"])
     assert any(node["type"] == "binding_affinity" for node in graph_row["nodes"])
     assert any(edge["type"] == "forms_complex_with" for edge in graph_row["edges"])
@@ -458,8 +473,8 @@ def test_coordinate_head_forward_backward_on_structure_batch():
     collator = RandomOrderCollator(
         vocab,
         max_source_tokens=24,
-        max_target_tokens=128,
-        max_seq_len=256,
+        max_target_tokens=192,
+        max_seq_len=320,
         max_numeric_targets=8,
         order_mode="first",
     )
@@ -470,7 +485,7 @@ def test_coordinate_head_forward_backward_on_structure_batch():
         num_layers=1,
         num_heads=4,
         ffn_dim=96,
-        max_seq_len=256,
+        max_seq_len=320,
         max_nodes=128,
         max_slots=64,
         endpoint_dim=16,

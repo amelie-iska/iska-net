@@ -10,10 +10,11 @@ from typing import Any, Iterable
 
 from tqdm.auto import tqdm
 
+from iska_reasoner.data.bioselfies import add_bioselfies_graph, bioselfies_from_modalities
 from iska_reasoner.data.audio import extract_audio_features
 from iska_reasoner.data.hebrew import hebrew_text_graph
 from iska_reasoner.data.motifs import normalize_fragment
-from iska_reasoner.data.multimodal import graphify_multimodal
+from iska_reasoner.data.multimodal import _add_oracle_attention_motion_priors, graphify_multimodal, parse_temperature_kelvin
 from iska_reasoner.data.phase_policy import ALLOW_STRUCTURE, SEQUENCE_ONLY, sanitize_row_for_phase, structure_fields_present
 from iska_reasoner.data.synthetic import iter_synthetic_examples
 from iska_reasoner.graph.orders import build_orders
@@ -309,6 +310,107 @@ def _selfies_sequence_nodes(selfies: str, prefix: str = "selfies", max_len: int 
         if i < 96:
             target_tokens.append(f"SELFIES:{token}")
     return nodes, edges, target_tokens
+
+
+def _bioselfies_from_components(row: dict[str, Any], components: Iterable[tuple[str, str, str]] = ()) -> str:
+    explicit = str(row.get("bioselfies") or row.get("bio_selfies") or row.get("BioSELFIES") or "").strip()
+    if explicit:
+        return explicit
+    tokens: list[str] = []
+
+    def add_break() -> None:
+        if tokens and tokens[-1] != "[CHAIN:break]":
+            tokens.append("[CHAIN:break]")
+
+    component_list = list(components)
+    if not component_list:
+        local = dict(row)
+        smiles = str(local.get("smiles") or local.get("SMILES") or local.get("canonical_smiles") or local.get("ligand_smiles") or "")
+        selfies = str(local.get("selfies") or local.get("SELFIES") or local.get("ligand_selfies") or "") or smiles_to_selfies(smiles)
+        if selfies:
+            local["selfies"] = selfies
+        return bioselfies_from_modalities(local)
+
+    for kind, value, _name in component_list:
+        kind_norm = normalize_fragment(kind)
+        clean = re.sub(r"\s+", "", str(value))
+        if not clean:
+            continue
+        add_break()
+        if kind_norm == "protein":
+            tokens.extend(f"[AA:{char if char in 'ACDEFGHIKLMNPQRSTVWYBJOUXZ' else 'X'}]" for char in clean.upper() if char.isalpha())
+        elif kind_norm == "rna":
+            tokens.extend(f"[RNA:{char if char in 'ACGURYSWKMBDHVN' else 'N'}]" for char in clean.upper() if char.isalpha())
+        elif kind_norm == "dna":
+            tokens.extend(f"[DNA:{char if char in 'ACGTRYSWKMBDHVN' else 'N'}]" for char in clean.upper() if char.isalpha())
+        elif kind_norm in {"ligand", "smiles"}:
+            tokens.extend(re.findall(r"\[[^\[\]]+\]", smiles_to_selfies(clean)))
+        elif kind_norm in {"ligand_selfies", "selfies"}:
+            tokens.extend(re.findall(r"\[[^\[\]]+\]", clean))
+    return "".join(tokens[:512])
+
+
+def _add_bioselfies_and_structure_dynamics(
+    nodes: list[Node],
+    edges: list[Edge],
+    target_tokens: list[str],
+    row: dict[str, Any],
+    *,
+    components: Iterable[tuple[str, str, str]] = (),
+    function_text: str = "",
+) -> None:
+    """Add BioSELFIES and UMA/all-atom Cartesian candidate records.
+
+    These are symbolic candidate targets for the oracle-guided path. They do
+    not add coordinate, energy, force, PDB, SDF, mmCIF, conformer, or trajectory
+    labels to the row.
+    """
+    node_ids = {node.id for node in nodes}
+    if "task" not in node_ids:
+        nodes.append(Node(id="task", type="structure_dynamics_task", value="structure_dynamics_proxy"))
+        for parent in ("domain", "complex", "protein", "target"):
+            if parent in node_ids:
+                edges.append(Edge(src=parent, dst="task", type="requests_structure_dynamics_proxy"))
+                break
+
+    bioselfies_text = _bioselfies_from_components(row, components)
+    modalities: set[str] = set()
+    if bioselfies_text:
+        root_id = "bioselfies" if "bioselfies" not in node_ids else "bioselfies_bio"
+        result = add_bioselfies_graph(nodes, edges, bioselfies_text, root_id=root_id)
+        target_tokens.extend(result.target_tokens)
+        modalities.update(item for item in result.modalities if item in {"protein", "dna", "rna", "selfies"})
+    for kind, _value, _name in components:
+        kind_norm = normalize_fragment(kind)
+        if kind_norm in {"protein", "dna", "rna"}:
+            modalities.add(kind_norm)
+        elif kind_norm in {"ligand", "ligand_selfies", "selfies", "smiles"}:
+            modalities.add("selfies")
+    if row.get("protein_sequence") or row.get("sequence") or row.get("Sequence"):
+        modalities.add("protein")
+    if row.get("rna_sequence"):
+        modalities.add("rna")
+    if row.get("dna_sequence"):
+        modalities.add("dna")
+    if row.get("smiles") or row.get("SMILES") or row.get("ligand_smiles") or row.get("selfies") or row.get("SELFIES"):
+        modalities.add("selfies")
+    if not modalities:
+        return
+    stage_row = dict(row)
+    stage_row["structure_dynamics_proxy"] = True
+    stage_row.setdefault("oracle", {"name": "uma"})
+    temp_k = parse_temperature_kelvin(stage_row.get("temperature") or stage_row.get("temp") or stage_row.get("T"))
+    target_tokens.extend(
+        _add_oracle_attention_motion_priors(
+            nodes,
+            edges,
+            stage_row,
+            sorted(modalities),
+            temp_k,
+            function_text,
+            "structure_dynamics_proxy",
+        )
+    )
 
 
 def _optional_molecular_descriptor_nodes(smiles: str, enabled: bool) -> tuple[list[Node], list[Edge], list[str]]:
@@ -837,6 +939,15 @@ def graphify_nucleotide_sequence(row: dict[str, Any], idx: int, dataset_name: st
         nodes.append(Node(id=node_id, type="translated_protein_sequence", value=protein_seq[:512], features={"length": len(protein_seq)}))
         edges.append(Edge(src=inferred, dst=node_id, type="translates_to"))
         target_tokens.append("DNA:translated_protein")
+    bio_row = dict(row)
+    bio_row["rna_sequence" if inferred == "rna" else "dna_sequence"] = clean
+    _add_bioselfies_and_structure_dynamics(
+        nodes,
+        edges,
+        target_tokens,
+        bio_row,
+        function_text=str(row.get("description") or row.get("function_description") or ""),
+    )
 
     ex = GraphExample(
         id=f"{dataset_name}_{idx}_{_stable_id(clean + str(annotations.get('accession') or ''))}",
@@ -934,6 +1045,9 @@ def graphify_protein_ec(row: dict[str, Any], idx: int, dataset_name: str) -> Gra
         target_tokens.extend(["UGM:task:function_description", "UGM:serializer:text", f"ANSWER:{function_text[:120]}"])
     target_tokens.extend(motif_tokens)
     target_tokens.extend(uniprot_tokens)
+    bio_row = dict(row)
+    bio_row["protein_sequence"] = sequence
+    _add_bioselfies_and_structure_dynamics(nodes, edges, target_tokens, bio_row, function_text=function_text)
     ex = GraphExample(
         id=f"{dataset_name}_{idx}_{_stable_id(sequence + ec_number)}",
         task="unigenx_ec_protein_generation",
@@ -1104,6 +1218,14 @@ def graphify_biomolecular_complex_affinity(row: dict[str, Any], idx: int, datase
         nodes.append(Node(id=node_id, type=node_type, value=str(value)[:256]))
         edges.append(Edge(src=node_id, dst="affinity", type="conditions_affinity" if affinity else "conditions_complex"))
         target_tokens.append(f"{token_prefix}:{normalize_fragment(str(value))[:80]}")
+    _add_bioselfies_and_structure_dynamics(
+        nodes,
+        edges,
+        target_tokens,
+        row,
+        components=components,
+        function_text=str(row.get("function_description") or row.get("description") or ""),
+    )
     ex = GraphExample(
         id=f"{dataset_name}_{idx}_{_stable_id('|'.join(value[:64] for _kind, value, _name in components) + affinity)}",
         task="biomolecular_complex_affinity",
@@ -1146,6 +1268,19 @@ def graphify_bioactivity(row: dict[str, Any], idx: int, dataset_name: str) -> Gr
         target_tokens.append(f"SMILES:{smiles[:120]}")
     if value:
         target_tokens.append(f"ASSAY:{assay_type or 'affinity'}:{value}{units}")
+    bio_components: list[tuple[str, str, str]] = []
+    if protein:
+        bio_components.append(("protein", protein, target_name or "target"))
+    if smiles:
+        bio_components.append(("ligand", smiles, "ligand"))
+    _add_bioselfies_and_structure_dynamics(
+        nodes,
+        edges,
+        target_tokens,
+        row,
+        components=bio_components,
+        function_text=str(row.get("function_description") or row.get("description") or target_name),
+    )
     ex = GraphExample(
         id=f"{dataset_name}_{idx}_{_stable_id(smiles + protein[:80] + value)}",
         task="biomed_bioactivity",

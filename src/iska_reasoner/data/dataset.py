@@ -57,6 +57,28 @@ COMMON_ATOMIC_NUMBERS = {
     "I": 53,
 }
 PROTEIN_BACKBONE_SYMBOLS = ("N", "C", "C", "O")
+AA_HEAVY_ATOM_SYMBOLS = {
+    "A": ("N", "C", "C", "O", "C"),
+    "R": ("N", "C", "C", "O", "C", "C", "C", "N", "C", "N", "N"),
+    "N": ("N", "C", "C", "O", "C", "C", "O", "N"),
+    "D": ("N", "C", "C", "O", "C", "C", "O", "O"),
+    "C": ("N", "C", "C", "O", "C", "S"),
+    "E": ("N", "C", "C", "O", "C", "C", "C", "O", "O"),
+    "Q": ("N", "C", "C", "O", "C", "C", "C", "O", "N"),
+    "G": ("N", "C", "C", "O"),
+    "H": ("N", "C", "C", "O", "C", "C", "N", "C", "C"),
+    "I": ("N", "C", "C", "O", "C", "C", "C", "C"),
+    "L": ("N", "C", "C", "O", "C", "C", "C", "C"),
+    "K": ("N", "C", "C", "O", "C", "C", "C", "C", "N"),
+    "M": ("N", "C", "C", "O", "C", "C", "S", "C"),
+    "F": ("N", "C", "C", "O", "C", "C", "C", "C", "C", "C", "C"),
+    "P": ("N", "C", "C", "O", "C", "C", "C"),
+    "S": ("N", "C", "C", "O", "C", "O"),
+    "T": ("N", "C", "C", "O", "C", "O", "C"),
+    "W": ("N", "C", "C", "O", "C", "C", "C", "C", "N", "C", "C", "C", "C"),
+    "Y": ("N", "C", "C", "O", "C", "C", "C", "C", "C", "C", "C", "O"),
+    "V": ("N", "C", "C", "O", "C", "C", "C"),
+}
 INTERNAL_COORD_TYPES = [
     "protein_phi",
     "protein_psi",
@@ -225,7 +247,7 @@ def _candidate_smiles(example: GraphExample) -> str:
 
 
 def _protein_backbone_symbols(example: GraphExample, max_atoms: int) -> list[str]:
-    """Return a coarse protein backbone atom list from sequence records only."""
+    """Return sequence-derived protein heavy-atom slots without structure labels."""
     if max_atoms <= 0:
         return []
     sequence = ""
@@ -241,10 +263,10 @@ def _protein_backbone_symbols(example: GraphExample, max_atoms: int) -> list[str
             residues.append(str(node.value).strip()[:1])
         elif node.type in {"protein_sequence", "translated_protein_sequence"} and node.value and not sequence:
             sequence = str(node.value)
-    residue_count = len(residues) if residues else sum(1 for char in sequence if char.isalpha())
     symbols: list[str] = []
-    for _ in range(residue_count):
-        symbols.extend(PROTEIN_BACKBONE_SYMBOLS)
+    residue_iter = residues if residues else [char for char in sequence.upper() if char.isalpha()]
+    for residue in residue_iter:
+        symbols.extend(AA_HEAVY_ATOM_SYMBOLS.get(str(residue).upper()[:1], PROTEIN_BACKBONE_SYMBOLS + ("C",)))
         if len(symbols) >= max_atoms:
             return symbols[:max_atoms]
     return symbols[:max_atoms]
@@ -256,10 +278,11 @@ def uma_coordinate_symbols(example: GraphExample, max_atoms: int) -> list[str]:
         return []
     symbols: list[str] = []
     for node in example.nodes:
-        if node.type not in {"atom", "atom_symbol"}:
+        if node.type not in {"atom", "atom_symbol", "selfies_token"}:
             continue
-        raw = node.features.get("element") or node.features.get("symbol") or node.value
+        raw = node.features.get("element") or node.features.get("symbol") or node.features.get("element_hint") or node.value
         symbol = str(raw).strip()
+        symbol = symbol.strip("[]").lstrip("=#")
         if symbol:
             symbols.append(symbol)
         if len(symbols) >= max_atoms:
@@ -280,6 +303,7 @@ def uma_coordinate_symbols(example: GraphExample, max_atoms: int) -> list[str]:
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             return []
+        mol = Chem.AddHs(mol)
         return [atom.GetSymbol() for atom in mol.GetAtoms()][:max_atoms]
     except Exception:
         return []

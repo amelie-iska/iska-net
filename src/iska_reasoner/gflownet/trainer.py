@@ -34,7 +34,14 @@ STRUCTURE_DYNAMICS_PREFIXES = (
     "HBOND:",
     "TORSION:",
     "HYBRID:",
+    "ALL_ATOM_CARTESIAN:",
+    "CARTESIAN_ATOM:",
+    "CARTESIAN_FRAME:",
 )
+
+CARTESIAN_PROTEIN_ATOMS = ("N", "CA", "C", "O", "CB", "CG", "CD", "CE", "NZ", "OD1", "OD2", "OE1", "OE2", "SG")
+CARTESIAN_NUCLEIC_ATOMS = ("P", "OP1", "OP2", "O5P", "C5P", "C4P", "C3P", "O3P", "C2P", "C1P", "N1", "N9")
+CARTESIAN_LIGAND_ATOMS = ("H", "C", "N", "O", "P", "S", "F", "Cl", "Br", "I", "heavy_atom")
 
 
 def _example_temperature_norm(example: Any) -> float | None:
@@ -92,6 +99,95 @@ def _temperature_diversity_bonuses(examples: list[Any], terminal_state: torch.Te
     }
 
 
+def _example_structure_modalities(example: Any) -> set[str]:
+    modalities: set[str] = set()
+    metadata = getattr(example, "metadata", {}) or {}
+    for item in metadata.get("modalities", []) or []:
+        if item in {"protein", "dna", "rna", "selfies"}:
+            modalities.add(str(item))
+    for item in metadata.get("component_kinds", []) or []:
+        kind = str(item)
+        if kind in {"protein", "dna", "rna"}:
+            modalities.add(kind)
+        elif kind in {"ligand", "ligand_selfies", "selfies"}:
+            modalities.add("selfies")
+    for node in getattr(example, "nodes", []) or []:
+        node_type = getattr(node, "type", "")
+        if node_type in {"amino_acid", "protein_sequence", "translated_protein_sequence"}:
+            modalities.add("protein")
+        elif node_type in {"dna_base", "dna_sequence"}:
+            modalities.add("dna")
+        elif node_type in {"rna_base", "rna_sequence"}:
+            modalities.add("rna")
+        elif node_type in {"selfies", "selfies_token", "smiles", "smiles_char", "atom", "atom_symbol", "molecule_sequence"}:
+            modalities.add("selfies")
+    for token in getattr(example, "target_tokens", []) or []:
+        if token.startswith(("AA:", "PROTEIN:")):
+            modalities.add("protein")
+        elif token.startswith("DNA:"):
+            modalities.add("dna")
+        elif token.startswith("RNA:"):
+            modalities.add("rna")
+        elif token.startswith(("SELFIES:", "SMILES:", "ATOM:")):
+            modalities.add("selfies")
+    return modalities
+
+
+def _derived_structure_dynamics_tokens(example: Any) -> list[str]:
+    """Derive structure-dynamics candidates from sequence/BioSELFIES rows.
+
+    This preserves restartability for older curated corpora whose rows were
+    generated before the explicit structure-dynamics target family existed.
+    It does not introduce coordinate labels: the derived records are candidate
+    action labels for UMA-scored all-atom Cartesian/internal-coordinate outputs.
+    """
+    modalities = _example_structure_modalities(example)
+    if not modalities:
+        return []
+    tokens = [
+        "UGM:task:structure_dynamics_proxy",
+        "UGM:oracle:uma_feedback",
+        "SEQ_STRUCT_DYN_PROXY:sequence_only_input",
+        "SEQ_STRUCT_DYN_PROXY:no_structure_file",
+        "SEQ_STRUCT_DYN_PROXY:uma_scored",
+        "SEQ_STRUCT_DYN_PROXY:candidate_motion_graph",
+        "SEQ_STRUCT_DYN_PROXY:physics_scored",
+        "SEQ_STRUCT_DYN_PROXY:uma_trajectory_proxy",
+        "SEQ_STRUCT_DYN_PROXY:all_atom_cartesian",
+        "ALL_ATOM_CARTESIAN:enabled",
+        "ALL_ATOM_CARTESIAN:uma_force_scored",
+        "ALL_ATOM_CARTESIAN:sequence_conditioned",
+        "CARTESIAN_FRAME:uma_rollout_step",
+        "TOKEN_MOTION:uma:refine:b32",
+        "TOKEN_MOTION:uma:stabilize:b32",
+        "UMA_TRAJ_BIN:refine:b32",
+        "UMA_TRAJ_BIN:stabilize:b32",
+        "TOKEN_COUPLING:uma:sequence_oracle:b32",
+        "UMA_INFLUENCE:uma:trajectory_physics:b32",
+        "CONTACT_PATCH:sequence_local",
+        "HBOND:candidate",
+    ]
+    if _example_temperature_norm(example) is not None:
+        tokens.extend(["SEQ_STRUCT_DYN_PROXY:temperature_conditioned", "CARTESIAN_FRAME:temperature_conditioned", "TOKEN_MOTION:uma:temperature_scaled:b32"])
+    if "protein" in modalities:
+        tokens.append("SEQ_STRUCT_DYN_PROXY:input:protein")
+        tokens.extend(["INTERNAL_COORD:protein_phi", "INTERNAL_COORD:protein_psi", "INTERNAL_COORD:protein_omega", "INTERNAL_COORD:sidechain_chi"])
+        tokens.extend(["ADAPTIVE_PATCH:residue_atom_patch", "ADAPTIVE_PATCH:open_patch", "ADAPTIVE_PATCH:close_patch"])
+        tokens.extend(["CONTACT_PATCH:long_range", "CONTACT_PATCH:hbond"])
+        tokens.extend(f"CARTESIAN_ATOM:protein:{atom}" for atom in CARTESIAN_PROTEIN_ATOMS)
+    if "rna" in modalities or "dna" in modalities:
+        for modality in sorted(modalities & {"rna", "dna"}):
+            tokens.append(f"SEQ_STRUCT_DYN_PROXY:input:{modality}")
+        tokens.extend(["INTERNAL_COORD:rna_alpha", "INTERNAL_COORD:rna_beta", "INTERNAL_COORD:rna_gamma", "INTERNAL_COORD:rna_delta", "INTERNAL_COORD:rna_epsilon", "INTERNAL_COORD:rna_zeta", "INTERNAL_COORD:glycosidic_chi", "INTERNAL_COORD:sugar_pucker"])
+        tokens.extend(["ADAPTIVE_PATCH:nucleic_acid_atom_patch", "CONTACT_PATCH:base_pair", "CONTACT_PATCH:hbond"])
+        tokens.extend(f"CARTESIAN_ATOM:nucleic_acid:{atom}" for atom in CARTESIAN_NUCLEIC_ATOMS)
+    if "selfies" in modalities:
+        tokens.append("SEQ_STRUCT_DYN_PROXY:input:selfies")
+        tokens.extend(["INTERNAL_COORD:ligand_torsion", "ADAPTIVE_PATCH:ligand_atom_patch", "CONTACT_PATCH:ligand_interface"])
+        tokens.extend(f"CARTESIAN_ATOM:ligand:{atom}" for atom in CARTESIAN_LIGAND_ATOMS)
+    return list(dict.fromkeys(tokens))
+
+
 def _token_allowed(token: str, *, include_prefixes: tuple[str, ...], exclude_prefixes: tuple[str, ...]) -> bool:
     if include_prefixes and not token.startswith(include_prefixes):
         return False
@@ -115,7 +211,10 @@ def _candidate_vocab(
     exclude_tuple = tuple(exclude_prefixes or ())
     counts: dict[str, int] = {}
     for ex in tqdm((dataset[i] for i in range(len(dataset))), total=len(dataset), desc="gflownet/candidate_vocab"):
-        for tok in ex.target_tokens:
+        tokens = list(ex.target_tokens)
+        if normalized_mode == "structure_dynamics":
+            tokens.extend(_derived_structure_dynamics_tokens(ex))
+        for tok in tokens:
             if not _token_allowed(tok, include_prefixes=include_tuple, exclude_prefixes=exclude_tuple):
                 continue
             counts[tok] = counts.get(tok, 0) + 1
@@ -123,13 +222,17 @@ def _candidate_vocab(
     return candidates, torch.zeros(0)
 
 
-def _collate_target_masks(candidates: list[str], use_context: bool = False):
+def _collate_target_masks(candidates: list[str], use_context: bool = False, mode: str = "sft"):
     index = {tok: i for i, tok in enumerate(candidates)}
+    normalized_mode = mode.strip().lower().replace("-", "_")
 
     def collate(examples):
         mask = torch.zeros(len(examples), len(candidates), dtype=torch.float32)
         for row, ex in enumerate(examples):
-            for tok in ex.target_tokens:
+            tokens = list(ex.target_tokens)
+            if normalized_mode == "structure_dynamics":
+                tokens.extend(_derived_structure_dynamics_tokens(ex))
+            for tok in tokens:
                 if tok in index:
                     mask[row, index[tok]] = 1.0
         batch = {"target_mask": mask, "example_ids": [ex.id for ex in examples], "examples": examples}
@@ -147,6 +250,7 @@ def _structure_dynamics_reward(
 ) -> tuple[float, dict[str, float]]:
     pred_set = set(predicted_tokens)
     target_dynamics = [tok for tok in getattr(example, "target_tokens", []) if tok.startswith(STRUCTURE_DYNAMICS_PREFIXES)]
+    target_dynamics.extend(_derived_structure_dynamics_tokens(example))
     target_dynamics_set = set(target_dynamics)
     dynamics_recall = len(target_dynamics_set & pred_set) / max(1, len(target_dynamics_set))
     predicted_dynamics = [tok for tok in predicted_tokens if tok.startswith(STRUCTURE_DYNAMICS_PREFIXES)]
@@ -157,6 +261,7 @@ def _structure_dynamics_reward(
     has_temperature = "SEQ_STRUCT_DYN_PROXY:temperature_conditioned" in pred_set or any(tok.startswith("TEMP") for tok in pred_set)
     has_oracle = "UGM:oracle:uma_feedback" in pred_set or any(tok.startswith(("TOKEN_COUPLING:uma:", "UMA_INFLUENCE:uma:", "UMA_TRAJ_BIN:")) for tok in pred_set)
     has_motion = any(tok.startswith("TOKEN_MOTION:uma:") for tok in predicted_tokens)
+    has_cartesian = any(tok.startswith(("ALL_ATOM_CARTESIAN:", "CARTESIAN_ATOM:", "CARTESIAN_FRAME:")) for tok in predicted_tokens)
     has_task = "UGM:task:structure_dynamics_proxy" in pred_set
     coverage_bonus = (
         0.08 * float(has_internal)
@@ -165,6 +270,7 @@ def _structure_dynamics_reward(
         + 0.08 * float(has_temperature)
         + 0.10 * float(has_oracle)
         + 0.08 * float(has_motion)
+        + 0.08 * float(has_cartesian)
         + 0.05 * float(has_task)
     )
     base = 0.08 + 0.20 * float(verifier_result.reward) + 0.32 * dynamics_recall + 0.18 * dynamics_precision + coverage_bonus
@@ -178,6 +284,7 @@ def _structure_dynamics_reward(
         "structure_dynamics_temperature_rate": float(has_temperature),
         "structure_dynamics_oracle_rate": float(has_oracle),
         "structure_dynamics_motion_rate": float(has_motion),
+        "structure_dynamics_cartesian_rate": float(has_cartesian),
     }
 
 
@@ -223,7 +330,7 @@ def train_gflownet_stage(cfg: dict[str, Any]) -> None:
         dataset,
         batch_size=int(cfg["train"].get("batch_size", 8)),
         shuffle=True,
-        collate_fn=_collate_target_masks(candidates, use_context=bool(gfn_cfg.get("use_context", False))),
+        collate_fn=_collate_target_masks(candidates, use_context=bool(gfn_cfg.get("use_context", False)), mode=gfn_mode),
     )
     device = get_device(cfg["run"].get("device", "cuda"))
     context_dim = 7 if bool(gfn_cfg.get("use_context", False)) else int(gfn_cfg.get("context_dim", 0))

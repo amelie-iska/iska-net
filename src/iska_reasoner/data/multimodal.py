@@ -134,6 +134,9 @@ FORCE_MAGNITUDE_BINS = ["zero", "tiny", "small", "medium", "large"]
 FORCE_DIRECTIONS = ["px", "nx", "py", "ny", "pz", "nz", "mixed"]
 PDB_RECORD_TYPES = ["MODEL", "ATOM", "HETATM", "CONECT", "REMARK", "ENDMDL", "END"]
 UMA_COORD_QUERY_ELEMENTS = ["H", "B", "C", "N", "O", "F", "P", "S", "Cl", "Br", "I"]
+CARTESIAN_PROTEIN_ATOM_SLOTS = ["N", "CA", "C", "O", "CB", "CG", "CD", "CE", "NZ", "OD1", "OD2", "OE1", "OE2", "SG"]
+CARTESIAN_NUCLEIC_ATOM_SLOTS = ["P", "OP1", "OP2", "O5P", "C5P", "C4P", "C3P", "O3P", "C2P", "C1P", "N1", "N9"]
+CARTESIAN_LIGAND_ATOM_SLOTS = ["H", "C", "N", "O", "P", "S", "F", "Cl", "Br", "I", "heavy_atom"]
 TOOL_TOKENS = ["lean", "python", "rdkit", "openmm", "uma", "retriever", "pdb_parser"]
 REASONING_TOKENS = [
     "thought",
@@ -197,6 +200,7 @@ STRUCTURE_DYNAMICS_PROXY_TOKENS = [
     "function_grounded",
     "no_structure_file",
     "candidate_motion_graph",
+    "all_atom_cartesian",
     "uma_trajectory_proxy",
     "physics_scored",
 ]
@@ -574,6 +578,11 @@ def multimodal_reference_tokens(extra_motif_paths: Iterable[str | Path] = ()) ->
     tokens.extend(f"UMA_TRAJ_BIN:{action}:{level}" for action in TOKEN_MOTION_ACTIONS for level in ATTENTION_BIN_LEVELS)
     tokens.extend(f"SEQ_STRUCT_DYN_PROXY:{token}" for token in STRUCTURE_DYNAMICS_PROXY_TOKENS)
     tokens.extend(f"SEQ_STRUCT_DYN_PROXY:input:{modality}" for modality in ["selfies", "protein", "dna", "rna"])
+    tokens.extend(["ALL_ATOM_CARTESIAN:enabled", "ALL_ATOM_CARTESIAN:uma_force_scored", "ALL_ATOM_CARTESIAN:sequence_conditioned"])
+    tokens.extend(f"CARTESIAN_ATOM:protein:{slot}" for slot in CARTESIAN_PROTEIN_ATOM_SLOTS)
+    tokens.extend(f"CARTESIAN_ATOM:nucleic_acid:{slot}" for slot in CARTESIAN_NUCLEIC_ATOM_SLOTS)
+    tokens.extend(f"CARTESIAN_ATOM:ligand:{slot}" for slot in CARTESIAN_LIGAND_ATOM_SLOTS)
+    tokens.extend(["CARTESIAN_FRAME:temperature_conditioned", "CARTESIAN_FRAME:uma_rollout_step"])
     tokens.extend(f"INTERNAL_COORD_QUERY:{token}" for token in INTERNAL_COORD_ACTION_TOKENS)
     tokens.extend(f"INTERNAL_COORD:{token}" for token in INTERNAL_COORD_ACTION_TOKENS)
     tokens.extend(f"ADAPTIVE_PATCH:{token}" for token in ADAPTIVE_PATCH_TOKENS)
@@ -1034,6 +1043,10 @@ def _add_oracle_attention_motion_priors(
     if function_text:
         tokens.append("SEQ_STRUCT_DYN_PROXY:function_grounded")
     tokens.extend(["SEQ_STRUCT_DYN_PROXY:uma_trajectory_proxy", "SEQ_STRUCT_DYN_PROXY:physics_scored"])
+    tokens.extend(["SEQ_STRUCT_DYN_PROXY:all_atom_cartesian", "ALL_ATOM_CARTESIAN:enabled", "ALL_ATOM_CARTESIAN:uma_force_scored", "ALL_ATOM_CARTESIAN:sequence_conditioned"])
+    if temp_k is not None:
+        tokens.append("CARTESIAN_FRAME:temperature_conditioned")
+    tokens.append("CARTESIAN_FRAME:uma_rollout_step")
 
     sequence_nodes = [
         node
@@ -1161,6 +1174,7 @@ def _add_oracle_attention_motion_priors(
         prior_specs.extend(("internal_coordinate_prior", "INTERNAL_COORD", token, "protein") for token in ["protein_phi", "protein_psi", "protein_omega", "sidechain_chi"])
         prior_specs.extend(("adaptive_patch_prior", "ADAPTIVE_PATCH", token, "protein") for token in ["residue_atom_patch", "open_patch", "close_patch"])
         prior_specs.extend(("contact_patch_prior", "CONTACT_PATCH", token, "protein") for token in ["sequence_local", "long_range", "hbond"])
+        prior_specs.extend(("all_atom_cartesian_prior", "CARTESIAN_ATOM", token, "protein") for token in CARTESIAN_PROTEIN_ATOM_SLOTS)
     if "rna" in modality_set or "dna" in modality_set:
         prior_specs.extend(
             ("internal_coordinate_prior", "INTERNAL_COORD", token, "nucleic_acid")
@@ -1168,10 +1182,12 @@ def _add_oracle_attention_motion_priors(
         )
         prior_specs.extend(("adaptive_patch_prior", "ADAPTIVE_PATCH", token, "nucleic_acid") for token in ["nucleic_acid_atom_patch", "open_patch", "close_patch"])
         prior_specs.extend(("contact_patch_prior", "CONTACT_PATCH", token, "nucleic_acid") for token in ["sequence_local", "base_pair", "hbond"])
+        prior_specs.extend(("all_atom_cartesian_prior", "CARTESIAN_ATOM", token, "nucleic_acid") for token in CARTESIAN_NUCLEIC_ATOM_SLOTS)
     if "selfies" in modality_set:
         prior_specs.append(("internal_coordinate_prior", "INTERNAL_COORD", "ligand_torsion", "ligand"))
         prior_specs.extend(("adaptive_patch_prior", "ADAPTIVE_PATCH", token, "ligand") for token in ["ligand_atom_patch", "open_patch", "close_patch"])
         prior_specs.append(("contact_patch_prior", "CONTACT_PATCH", "ligand_interface", "ligand"))
+        prior_specs.extend(("all_atom_cartesian_prior", "CARTESIAN_ATOM", token, "ligand") for token in CARTESIAN_LIGAND_ATOM_SLOTS)
     for idx, (node_type, prefix, token, component) in enumerate(prior_specs):
         node_id = f"{node_type}_{idx}"
         nodes.append(
@@ -1184,7 +1200,7 @@ def _add_oracle_attention_motion_priors(
         )
         edges.append(Edge(src=node_id, dst="structure_dynamics_proxy", type="proposes_proxy_action"))
         edges.append(Edge(src="uma_oracle", dst=node_id, type="scores_proxy_action"))
-        tokens.append(f"{prefix}:{token}")
+        tokens.append(f"{prefix}:{component}:{token}" if prefix == "CARTESIAN_ATOM" else f"{prefix}:{token}")
     return tokens
 
 

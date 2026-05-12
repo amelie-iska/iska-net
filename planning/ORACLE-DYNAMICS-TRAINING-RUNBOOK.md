@@ -76,9 +76,11 @@ The order matters: model/data/train base configs first, run-local batch/epoch ov
 | BioSELFIES vocab | `reference_bioselfies_tokens` | Adds BioSELFIES, hybrid patch, H-bond, and torsion records to reference vocabulary | ready |
 | BioSELFIES graph | `add_bioselfies_graph` | Produces typed graph nodes/edges without structure labels | ready |
 | Multimodal graphification | `graphify_multimodal` | Accepts `bioselfies`, `bio_selfies`, `BioSELFIES`, `input_representation: bioselfies`, and `bioselfies_only` | ready |
-| Generic graphification | `graphify_rows` | Routes BioSELFIES rows into multimodal graphification | ready |
+| Biomed BioSELFIES graphification | `graphify_protein_ec`, `graphify_bioactivity`, `graphify_biomolecular_complex_affinity` | Adds BioSELFIES views to UniProt, bioactivity, and complex-affinity rows without structure labels | ready |
+| Generic graphification | `graphify_rows` | Routes explicit BioSELFIES rows into multimodal graphification and biomed rows into BioSELFIES-augmented graphifiers | ready |
 | Sequence-only gate | `graph_structure_violations` | Allows BioSELFIES string molecule anchors while rejecting direct structure labels | ready |
-| UMA query batching | `RandomOrderCollator` | Emits `UMA_COORD_QUERY:*` slots from symbolic records | ready |
+| UMA query batching | `RandomOrderCollator` | Emits `UMA_COORD_QUERY:*` slots from symbolic records using sequence-derived heavy-atom protein slots and RDKit molecule atoms with explicit hydrogens where available | ready |
+| All-atom Cartesian candidates | `multimodal_reference_tokens` and structure-dynamics graphification | Emits `ALL_ATOM_CARTESIAN:*`, `CARTESIAN_ATOM:*`, and `CARTESIAN_FRAME:*` output/action labels for UMA-scored generated coordinate proposals | ready |
 | Coordinate readout | `RandomOrderTokenGT.coordinate_head` | Generates continuous coordinate proposals from hidden graph-of-thought state | ready |
 | UMA force surrogate | `uma_coordinate_head_oracle_loss` | Scores generated coordinates with FairChem/UMA and backpropagates detached-force surrogate | ready |
 | Internal-coordinate slots | `internal_coordinate_actions` and `RandomOrderCollator` | Emits `INTERNAL_COORD_QUERY:*` slots from symbolic sequence records | ready |
@@ -86,7 +88,7 @@ The order matters: model/data/train base configs first, run-local batch/epoch ov
 | Internal-coordinate UMA feedback | `uma_internal_coordinate_head_oracle_loss` | Builds generated coarse geometries from model actions and scores them with UMA forces | ready |
 | Contact-map coupling | `uma_contact_alignment_loss` | Aligns emitted contact maps and embedding geometry with UMA-stage feedback records | ready |
 | SFT GFlowNet | `config/train/gflownet_sft_4090.yaml` | Learns broad symbolic graph completions for function/annotation/assay rows | ready |
-| Structure-dynamics GFlowNet | `config/train/structure_dynamics_gflownet_4090.yaml` | Learns oracle/contact/internal-coordinate/adaptive-patch graph construction | ready |
+| Structure-dynamics GFlowNet | `config/train/structure_dynamics_gflownet_4090.yaml` | Learns oracle/contact/internal-coordinate/adaptive-patch/all-atom Cartesian graph construction and can derive candidates from legacy curated biomed rows | ready |
 | UniProt features | `graphify_protein_ec` and `_add_uniprot_annotations` | Adds symbolic binding-site, active-site, cofactor, domain, GO, keyword, and PTM records | ready |
 | Complex affinity | `graphify_biomolecular_complex_affinity` | Adds protein/protein, protein/nucleic-acid, protein/ligand, and arbitrary component affinity rows | ready |
 | Training loop | `run_training_stage` | Combines token loss, UMA coordinate loss, contact loss, tqdm, JSONL metrics, checkpoints, W&B | ready |

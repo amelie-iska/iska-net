@@ -63,9 +63,9 @@ The current implementation adds the local-data contracts needed for this plan:
 UGM now has two separate GFlowNet tracks:
 
 - **SFT GFlowNet (`gflownet.mode: sft`)** learns diverse symbolic graph completions over ordinary SFT target tokens. Use this for function descriptions, UniProt annotations, molecule captions, assay metadata, tool/proof/text graph rows, and sequence/function alignment.
-- **Structure-dynamics GFlowNet (`gflownet.mode: structure_dynamics`)** filters candidates to oracle and dynamics records such as `INTERNAL_COORD:*`, `ADAPTIVE_PATCH:*`, `CONTACT_PATCH:*`, `TOKEN_MOTION:*`, temperature tokens, and UMA/force records. Use this after the model has learned the symbolic substrate and the UMA/FairChem preflight passes.
+- **Structure-dynamics GFlowNet (`gflownet.mode: structure_dynamics`)** filters candidates to oracle and dynamics records such as `ALL_ATOM_CARTESIAN:*`, `CARTESIAN_ATOM:*`, `CARTESIAN_FRAME:*`, `INTERNAL_COORD:*`, `ADAPTIVE_PATCH:*`, `CONTACT_PATCH:*`, `TOKEN_MOTION:*`, temperature tokens, and UMA/force records. Use this after the model has learned the symbolic substrate and the UMA/FairChem preflight passes. If an older curated corpus lacks the explicit dynamics target family, the trainer derives these candidates from protein/DNA/RNA/SELFIES nodes so the failed GFlowNet phase can restart without repeating curation.
 
-The standard SFT phase can train on UniProt feature rows and affinity rows directly. The structure-dynamics phase then uses those annotations as context: binding residues and complex components become places where internal-coordinate actions, contact patches, adaptive atom patches, and UMA-scored geometry proposals should concentrate.
+The standard SFT phase can train on UniProt feature rows and affinity rows directly. The structure-dynamics phase then uses those annotations as context: binding residues and complex components become places where BioSELFIES-conditioned all-atom Cartesian coordinate proposals, internal-coordinate actions, contact patches, adaptive atom patches, and UMA-scored geometry proposals should concentrate.
 
 ## Current Full Local Corpus Status
 
@@ -178,7 +178,7 @@ Train the strict direct oracle-dynamics path:
 - UniProt binding-site rows should create sequence nodes, `uniprot_feature` nodes, and `marks_binding_site` edges.
 - Complex affinity rows should create at least two `biomolecule_component` or ligand/protein/nucleic-acid component nodes, a `biomolecular_complex` node, a `binding_affinity` node, and component-to-complex edges.
 - SFT GFlowNet candidate vocab should include broad symbolic target tokens.
-- Structure-dynamics GFlowNet candidate vocab should include internal-coordinate/contact/adaptive-patch/oracle tokens and exclude ordinary prose-only target tokens.
+- Structure-dynamics GFlowNet candidate vocab should include BioSELFIES/all-atom Cartesian/internal-coordinate/contact/adaptive-patch/oracle tokens and exclude ordinary prose-only target tokens.
 - Strict oracle-dynamics training should keep `coordinate_loss_weight: 0.0`; UMA coordinate and internal-coordinate losses must be oracle-supervised, not coordinate-label supervised.
 
 ## Next Extensions

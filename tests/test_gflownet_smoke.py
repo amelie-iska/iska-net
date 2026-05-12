@@ -126,3 +126,28 @@ def test_structure_dynamics_candidate_vocab_filters_to_dynamics_tokens(tmp_path)
     assert "INTERNAL_COORD:protein_phi" in candidates
     assert "ADAPTIVE_PATCH:residue_atom_patch" in candidates
     assert "CONTACT_PATCH:hbond" in candidates
+
+
+def test_structure_dynamics_candidate_vocab_derives_biomed_candidates_when_rows_are_legacy(tmp_path):
+    path = tmp_path / "legacy_biomed.jsonl"
+    row = GraphExample(
+        id="legacy",
+        task="biomolecular_complex_affinity",
+        nodes=[
+            Node(id="protein", type="protein_sequence", value="MKT"),
+            Node(id="ligand", type="smiles", value="CCO"),
+            Node(id="temperature", type="temperature", value="330K", features={"kelvin": 330.0}),
+        ],
+        edges=[],
+        target_tokens=["BIOMED:complex_affinity", "ANSWER:legacy"],
+    ).to_dict()
+    path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    from iska_reasoner.data.dataset import GraphJsonlDataset
+
+    dataset = GraphJsonlDataset(path)
+    candidates, _ = _candidate_vocab(dataset, 64, mode="structure_dynamics")
+    assert "ANSWER:legacy" not in candidates
+    assert "UGM:task:structure_dynamics_proxy" in candidates
+    assert "ALL_ATOM_CARTESIAN:enabled" in candidates
+    assert "CARTESIAN_ATOM:protein:CA" in candidates
+    assert "CARTESIAN_ATOM:ligand:heavy_atom" in candidates
