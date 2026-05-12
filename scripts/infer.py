@@ -14,6 +14,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from iska_reasoner.graph.schema import Edge, GraphExample, Node
 from iska_reasoner.data.multimodal import graphify_multimodal, records_to_multimodel_pdb, records_to_xyz_trajectory, write_mdtraj_trajectory
 from iska_reasoner.inference.generate import complete_graph_tokens, load_model_for_inference, predict_uma_coordinate_frame
+from iska_reasoner.inference.structure_dynamics import (
+    derive_full_atom_records,
+    generated_initial_coordinates,
+    high_quality_trajectory_score,
+    smooth_trajectory_frames,
+)
 from iska_reasoner.oracles import score_uma_coordinate_candidate
 from iska_reasoner.tools import verify_example_tokens
 from iska_reasoner.utils.config import load_config
@@ -164,6 +170,8 @@ def main() -> None:
     parser.add_argument("--trajectory-formats", default=None, help="Comma-separated MD trajectory formats to write beside the PDB. Default: dcd,xyz.")
     parser.add_argument("--trajectory-frames", type=int, default=None, help="Number of frames for structure-dynamics export.")
     parser.add_argument("--trajectory-max-atoms", type=int, default=None, help="Maximum coordinate-query atoms to export.")
+    parser.add_argument("--trajectory-max-residues", type=int, default=None, help="Maximum sequence residues/bases to include in full-size structure-dynamics export.")
+    parser.add_argument("--trajectory-no-full-size", action="store_true", help="Disable full-size sequence-derived structure export and use only model coordinate query slots.")
     parser.add_argument("--trajectory-force-step-size", type=float, default=None, help="UMA force rollout step size in Angstrom per eV/A proxy units.")
     parser.add_argument("--trajectory-oracle-backend", default=None, help="Coordinate rollout oracle backend: fairchem/uma or proxy.")
     parser.add_argument("--trajectory-strict-oracle", action="store_true", help="Fail if UMA/FairChem force rollout is unavailable.")
@@ -247,6 +255,9 @@ def main() -> None:
         formats = [item.strip() for item in str(formats_text).split(",") if item.strip()]
         frame_count = int(args.trajectory_frames or structure_cfg.get("frames", 8))
         max_atoms = int(args.trajectory_max_atoms or structure_cfg.get("max_atoms", 64))
+        max_residues = int(args.trajectory_max_residues or structure_cfg.get("max_residues", 500))
+        full_size = bool(structure_cfg.get("full_size_export", True)) and not args.trajectory_no_full_size
+        score_target_frames = int(structure_cfg.get("score_target_frames", max(64, frame_count)))
         force_step_size = float(args.trajectory_force_step_size or structure_cfg.get("force_step_size", 0.02))
         oracle_backend = str(args.trajectory_oracle_backend or structure_cfg.get("oracle_backend", "fairchem"))
         oracle_repo = str(structure_cfg.get("oracle_repo", "data/external_repos/fairchem"))
@@ -267,30 +278,49 @@ def main() -> None:
         atoms = prediction.get("atoms") or []
         coords = prediction.get("coordinates") or []
         symbols = prediction.get("symbols") or [str(atom.get("element", "C")) for atom in atoms]
+        full_atoms = derive_full_atom_records(example, max_atoms=max_atoms, max_residues=max_residues) if full_size else []
+        generated_full_size = bool(full_atoms)
+        if generated_full_size:
+            atoms = full_atoms
+            coords = generated_initial_coordinates(atoms, coords)
+            symbols = [str(atom.get("element", "C")) for atom in atoms]
         if not atoms or not coords:
             raise SystemExit("Structure-dynamics export requires a checkpoint with coordinate_head_enabled=true and nonempty UMA coordinate query slots.")
-        frames, oracle_results = _rollout_structure_frames(
-            symbols,
-            coords,
-            example,
-            frame_count=frame_count,
-            backend=oracle_backend,
-            strict=strict_oracle,
-            repo_path=oracle_repo,
-            model_name=oracle_model,
-            task_name=oracle_task,
-            device_name=oracle_device,
-            force_step_size=force_step_size,
+        if generated_full_size and (oracle_backend == "proxy" or len(atoms) > int(structure_cfg.get("oracle_max_atoms", 512))):
+            frames = smooth_trajectory_frames(atoms, coords, frame_count=frame_count, temperature_k=_temperature_kelvin(example))
+            oracle_results = []
+        else:
+            frames, oracle_results = _rollout_structure_frames(
+                symbols,
+                coords,
+                example,
+                frame_count=frame_count,
+                backend=oracle_backend,
+                strict=strict_oracle,
+                repo_path=oracle_repo,
+                model_name=oracle_model,
+                task_name=oracle_task,
+                device_name=oracle_device,
+                force_step_size=force_step_size,
+            )
+        hq_score = high_quality_trajectory_score(
+            atoms,
+            frames,
+            target_frames=score_target_frames,
+            expected_residues=max_residues if generated_full_size else None,
         )
         written = _write_structure_outputs(prefix, atoms, frames, [], formats)
         output["structure_dynamics_export"] = {
             "files": written,
             "frames": len(frames),
             "atoms": len(atoms),
+            "full_size_export": generated_full_size,
+            "max_residues": max_residues,
             "trajectory_formats": formats,
             "oracle_backend": oracle_backend,
             "strict_oracle": strict_oracle,
             "oracle_rollout": oracle_results,
+            "long_high_quality_scoring": hq_score,
             "note": "Coordinates are model-generated from UMA coordinate query slots; PDB/DCD/XYZ are generated trajectory artifacts, not supervised structure labels.",
         }
     payload = json.dumps(output, indent=2)

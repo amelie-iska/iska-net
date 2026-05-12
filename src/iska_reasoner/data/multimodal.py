@@ -1336,8 +1336,83 @@ def _modalities_from_tokens(tokens: Iterable[str]) -> list[str]:
     return sorted(set(modalities))
 
 
+PROTEIN_RESIDUE_NAMES = {
+    "ALA",
+    "ARG",
+    "ASN",
+    "ASP",
+    "CYS",
+    "GLN",
+    "GLU",
+    "GLY",
+    "HIS",
+    "ILE",
+    "LEU",
+    "LYS",
+    "MET",
+    "PHE",
+    "PRO",
+    "SER",
+    "THR",
+    "TRP",
+    "TYR",
+    "VAL",
+    "UNK",
+}
+
+
+def _protein_residue_ranges(atoms: list[dict[str, Any]]) -> list[tuple[str, int, str, int, str, int]]:
+    residues_by_chain: dict[str, dict[int, str]] = {}
+    for atom in atoms:
+        if not isinstance(atom, dict):
+            continue
+        residue = _as_str(atom.get("residue") or "MOL").strip()[:3].upper()
+        component = _as_str(atom.get("component") or "").strip().lower()
+        if component != "protein" and residue not in PROTEIN_RESIDUE_NAMES:
+            continue
+        chain = (_as_str(atom.get("chain") or "A").strip()[:1] or "A").upper()
+        try:
+            resseq = int(atom.get("residue_index", 1))
+        except Exception:
+            continue
+        residues_by_chain.setdefault(chain, {})[resseq] = residue or "UNK"
+
+    ranges: list[tuple[str, int, str, int, str, int]] = []
+    for chain, residues in sorted(residues_by_chain.items()):
+        ordered = sorted(residues)
+        if not ordered:
+            continue
+        start = prev = ordered[0]
+        for resseq in ordered[1:]:
+            if resseq == prev + 1:
+                prev = resseq
+                continue
+            if prev - start + 1 >= 3:
+                ranges.append((chain, start, residues[start], prev, residues[prev], prev - start + 1))
+            start = prev = resseq
+        if prev - start + 1 >= 3:
+            ranges.append((chain, start, residues[start], prev, residues[prev], prev - start + 1))
+    return ranges
+
+
+def _pdb_secondary_structure_records(atoms: list[dict[str, Any]]) -> list[str]:
+    records: list[str] = [
+        "REMARK 900 UGM GENERATED STRUCTURE-DYNAMICS TRAJECTORY",
+        "REMARK 901 SECONDARY STRUCTURE RECORDS ARE SEQUENCE-DERIVED CARTOON PRIORS",
+        "REMARK 902 VIEWER REPRESENTATION: CARTOON RECOMMENDED",
+    ]
+    for serial, (chain, start, start_res, end, end_res, length) in enumerate(_protein_residue_ranges(atoms), start=1):
+        helix_id = f"H{serial:03d}"[-3:]
+        records.append(
+            f"HELIX  {serial:3d} {helix_id:>3s} {start_res:>3s} {chain:1s}{start:4d}  "
+            f"{end_res:>3s} {chain:1s}{end:4d}  1                                  {length:5d}"
+        )
+    return records
+
+
 def records_to_multimodel_pdb(atoms: list[dict[str, Any]], frames: list[list[list[float]]], bonds: list[dict[str, Any]] | None = None) -> str:
     rows: list[str] = []
+    rows.extend(_pdb_secondary_structure_records(atoms))
     for frame_idx, coords in enumerate(frames, start=1):
         rows.append(f"MODEL     {frame_idx:4d}")
         for atom_idx, atom in enumerate(atoms, start=1):

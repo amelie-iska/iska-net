@@ -79,6 +79,14 @@ AA_HEAVY_ATOM_SYMBOLS = {
     "Y": ("N", "C", "C", "O", "C", "C", "C", "C", "C", "C", "C", "O"),
     "V": ("N", "C", "C", "O", "C", "C", "C"),
 }
+NUCLEIC_BACKBONE_SYMBOLS = ("P", "O", "O", "O", "C", "C", "C", "O", "C", "C", "O")
+NUCLEIC_BASE_HEAVY_ATOM_SYMBOLS = {
+    "A": ("N", "C", "N", "C", "C", "C", "N", "C", "N"),
+    "C": ("N", "C", "O", "N", "C", "C"),
+    "G": ("N", "C", "N", "C", "C", "C", "O", "N", "N"),
+    "T": ("N", "C", "O", "N", "C", "C", "C", "O"),
+    "U": ("N", "C", "O", "N", "C", "C", "O"),
+}
 INTERNAL_COORD_TYPES = [
     "protein_phi",
     "protein_psi",
@@ -272,6 +280,35 @@ def _protein_backbone_symbols(example: GraphExample, max_atoms: int) -> list[str
     return symbols[:max_atoms]
 
 
+def _nucleic_acid_symbols(example: GraphExample, max_atoms: int) -> list[str]:
+    """Return sequence-derived DNA/RNA heavy-atom slots without structure labels."""
+    if max_atoms <= 0:
+        return []
+    bases: list[tuple[str, str]] = []
+    sequence_by_type: dict[str, str] = {}
+    metadata = example.metadata or {}
+    for key, base_type in (("dna_sequence", "dna_base"), ("dna", "dna_base"), ("rna_sequence", "rna_base"), ("rna", "rna_base")):
+        value = metadata.get(key)
+        if value and base_type not in sequence_by_type:
+            sequence_by_type[base_type] = str(value)
+    for node in example.nodes:
+        if node.type in {"dna_base", "rna_base"} and node.value:
+            bases.append((node.type, str(node.value).strip()[:1]))
+        elif node.type in {"dna_sequence", "rna_sequence"} and node.value and node.type.replace("_sequence", "_base") not in sequence_by_type:
+            sequence_by_type[node.type.replace("_sequence", "_base")] = str(node.value)
+    if not bases:
+        for base_type, sequence in sequence_by_type.items():
+            bases.extend((base_type, char) for char in str(sequence).upper() if char.isalpha())
+    symbols: list[str] = []
+    for _base_type, base in bases:
+        base_key = str(base).upper()[:1]
+        symbols.extend(NUCLEIC_BACKBONE_SYMBOLS)
+        symbols.extend(NUCLEIC_BASE_HEAVY_ATOM_SYMBOLS.get(base_key, NUCLEIC_BASE_HEAVY_ATOM_SYMBOLS["A"]))
+        if len(symbols) >= max_atoms:
+            return symbols[:max_atoms]
+    return symbols[:max_atoms]
+
+
 def uma_coordinate_symbols(example: GraphExample, max_atoms: int) -> list[str]:
     """Derive UMA coordinate-query atom symbols without reading structure labels."""
     if max_atoms <= 0:
@@ -288,9 +325,20 @@ def uma_coordinate_symbols(example: GraphExample, max_atoms: int) -> list[str]:
         if len(symbols) >= max_atoms:
             return symbols[:max_atoms]
 
-    protein_symbols = _protein_backbone_symbols(example, max_atoms)
+    protein_symbols = _protein_backbone_symbols(example, max_atoms - len(symbols))
     if protein_symbols:
-        return protein_symbols[:max_atoms]
+        symbols.extend(protein_symbols)
+        if len(symbols) >= max_atoms:
+            return symbols[:max_atoms]
+
+    nucleic_symbols = _nucleic_acid_symbols(example, max_atoms - len(symbols))
+    if nucleic_symbols:
+        symbols.extend(nucleic_symbols)
+        if len(symbols) >= max_atoms:
+            return symbols[:max_atoms]
+
+    if symbols:
+        return symbols[:max_atoms]
 
     smiles = _candidate_smiles(example)
     if not smiles:

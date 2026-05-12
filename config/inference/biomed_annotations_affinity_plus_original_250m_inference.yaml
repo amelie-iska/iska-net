@@ -1,0 +1,19 @@
+inference:
+  checkpoint: outputs/biomed_annotations_affinity_plus_original_250m/checkpoint_final.pt
+  vocab: outputs/biomed_annotations_affinity_plus_original_250m/vocab.jsonl
+  max_steps: 16
+  max_source_tokens: 512
+  sample: false
+  temperature: 1.0
+  device: cuda
+  structure_dynamics:
+    frames: 64
+    max_atoms: 5000
+    max_residues: 500
+    full_size_export: true
+    score_target_frames: 64
+    trajectory_formats: dcd,xyz
+    oracle_backend: proxy
+    oracle_max_atoms: 512
+    force_step_size: 0.02
+    strict_oracle: false

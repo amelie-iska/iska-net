@@ -17,6 +17,12 @@ from iska_reasoner.data.multimodal import (
     records_to_xyz_trajectory,
     write_mdtraj_trajectory,
 )
+from iska_reasoner.inference.structure_dynamics import (
+    derive_full_atom_records,
+    generated_initial_coordinates,
+    high_quality_trajectory_score,
+    smooth_trajectory_frames,
+)
 from iska_reasoner.data.phase_policy import ALLOW_STRUCTURE, graph_structure_violations
 from iska_reasoner.data.motifs import (
     build_motif_vocabulary,
@@ -547,6 +553,72 @@ def test_uma_coordinate_queries_come_from_protein_sequence_without_structure_lab
     assert batch["uma_coordinate_query_mask"].sum().item() == 8
     assert batch["uma_coordinate_symbols"][0][:4] == ["N", "C", "C", "O"]
     assert batch["coordinate_mask"].sum().item() == 0
+
+
+def test_uma_coordinate_queries_come_from_selfies_and_nucleic_sequences():
+    molecule = graphify_multimodal(
+        {
+            "task": "structure_dynamics_proxy",
+            "selfies": "[C][=O][O]",
+            "smiles": "CC(=O)O",
+            "temperature": 325.0,
+            "oracle": {"name": "uma"},
+        },
+        21,
+        "local_multimodal_graph_to_graph",
+    )
+    nucleic = graphify_multimodal(
+        {
+            "task": "structure_dynamics_proxy",
+            "dna_sequence": "ATGC",
+            "rna_sequence": "AUGC",
+            "temperature": 310.0,
+            "oracle": {"name": "uma"},
+        },
+        22,
+        "local_multimodal_graph_to_graph",
+    )
+    vocab = build_vocab([molecule, nucleic], extra_tokens=multimodal_reference_tokens())
+    collator = RandomOrderCollator(
+        vocab,
+        max_source_tokens=96,
+        max_target_tokens=32,
+        max_seq_len=192,
+        max_uma_coordinate_atoms=16,
+        order_mode="first",
+    )
+    batch = collator([molecule, nucleic])
+    assert batch["uma_coordinate_query_mask"][0].sum().item() == 3
+    assert batch["uma_coordinate_symbols"][0] == ["C", "O", "O"]
+    assert batch["uma_coordinate_query_mask"][1].sum().item() == 16
+    assert batch["uma_coordinate_symbols"][1][:4] == ["P", "O", "O", "O"]
+
+
+def test_full_size_sequence_trajectory_export_records_and_hq_score():
+    seq = ("MKTWYVQLAGSTNDEKRHFP" * 25)[:500]
+    ex = graphify_multimodal(
+        {
+            "task": "structure_dynamics_proxy",
+            "protein_sequence": seq,
+            "temperature": 325.0,
+            "oracle": {"name": "uma"},
+        },
+        23,
+        "local_multimodal_graph_to_graph",
+    )
+    atoms = derive_full_atom_records(ex, max_atoms=5000, max_residues=500)
+    assert len(atoms) > 3000
+    assert atoms[0]["residue_index"] == 1
+    assert atoms[-1]["residue_index"] <= 500
+    coords = generated_initial_coordinates(atoms)
+    frames = smooth_trajectory_frames(atoms, coords, frame_count=8, temperature_k=325.0)
+    score = high_quality_trajectory_score(atoms, frames, target_frames=8, expected_residues=500)
+    pdb = records_to_multimodel_pdb(atoms, frames, [])
+    assert "HELIX" in pdb
+    assert "REMARK 902 VIEWER REPRESENTATION: CARTOON RECOMMENDED" in pdb
+    assert score["atom_count"] == len(atoms)
+    assert score["residue_count"] == 500
+    assert score["long_hq_score"] > 0.5
 
 
 def test_internal_coordinate_query_slots_come_from_sequence_without_structure_labels():
