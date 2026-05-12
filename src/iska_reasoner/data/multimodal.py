@@ -8,6 +8,7 @@ from typing import Any, Iterable
 from iska_reasoner.data.bioselfies import (
     add_bioselfies_graph,
     bioselfies_from_modalities,
+    modality_bioselfies_fields,
     reference_bioselfies_tokens,
 )
 from iska_reasoner.data.motifs import (
@@ -134,8 +135,8 @@ FORCE_MAGNITUDE_BINS = ["zero", "tiny", "small", "medium", "large"]
 FORCE_DIRECTIONS = ["px", "nx", "py", "ny", "pz", "nz", "mixed"]
 PDB_RECORD_TYPES = ["MODEL", "ATOM", "HETATM", "CONECT", "REMARK", "ENDMDL", "END"]
 UMA_COORD_QUERY_ELEMENTS = ["H", "B", "C", "N", "O", "F", "P", "S", "Cl", "Br", "I"]
-CARTESIAN_PROTEIN_ATOM_SLOTS = ["N", "CA", "C", "O", "CB", "CG", "CD", "CE", "NZ", "OD1", "OD2", "OE1", "OE2", "SG"]
-CARTESIAN_NUCLEIC_ATOM_SLOTS = ["P", "OP1", "OP2", "O5P", "C5P", "C4P", "C3P", "O3P", "C2P", "C1P", "N1", "N9"]
+CARTESIAN_PROTEIN_ATOM_SLOTS = ["H", "N", "CA", "HA", "C", "O", "CB", "CG", "CD", "CE", "NZ", "OD1", "OD2", "OE1", "OE2", "SG"]
+CARTESIAN_NUCLEIC_ATOM_SLOTS = ["H", "P", "OP1", "OP2", "O5P", "C5P", "C4P", "C3P", "O3P", "C2P", "C1P", "N1", "N9"]
 CARTESIAN_LIGAND_ATOM_SLOTS = ["H", "C", "N", "O", "P", "S", "F", "Cl", "Br", "I", "heavy_atom"]
 TOOL_TOKENS = ["lean", "python", "rdkit", "openmm", "uma", "retriever", "pdb_parser"]
 REASONING_TOKENS = [
@@ -638,6 +639,71 @@ def _add_sequence(
         if i < 96:
             target_tokens.append(f"{token_prefix}:{char}")
     return target_tokens
+
+
+def _contact_prior_records(row: dict[str, Any], max_contacts: int = 128) -> list[dict[str, Any]]:
+    raw = row.get("esm_contacts") or row.get("contact_priors") or row.get("predicted_contacts") or []
+    if isinstance(raw, dict):
+        raw = raw.get("contacts") or raw.get("pairs") or []
+    records: list[dict[str, Any]] = []
+    for item in _as_list(raw):
+        try:
+            if isinstance(item, dict):
+                i = int(item.get("i", item.get("residue_i", item.get("src", 0))))
+                j = int(item.get("j", item.get("residue_j", item.get("dst", 0))))
+                prob = float(item.get("probability", item.get("prob", item.get("score", 0.0))))
+                source = _as_str(item.get("source") or "esm_contact_prior")
+            elif isinstance(item, (list, tuple)) and len(item) >= 3:
+                i, j, prob = int(item[0]), int(item[1]), float(item[2])
+                source = "esm_contact_prior"
+            else:
+                continue
+        except Exception:
+            continue
+        if i <= 0 or j <= 0 or i == j:
+            continue
+        if j < i:
+            i, j = j, i
+        records.append({"i": i, "j": j, "probability": max(0.0, min(1.0, prob)), "source": source})
+        if len(records) >= max_contacts:
+            break
+    return records
+
+
+def _contact_bin(probability: float) -> str:
+    bin_idx = int(max(0, min(63, round(float(probability) * 63))))
+    return _fine_bin_label(bin_idx)
+
+
+def _add_contact_prior_nodes(nodes: list[Node], edges: list[Edge], row: dict[str, Any]) -> list[str]:
+    records = _contact_prior_records(row)
+    if not records:
+        return []
+    tokens = ["CONTACT_PATCH:esm_prior", "ESM_CONTACT:enabled"]
+    root_id = "esm_contact_prior"
+    nodes.append(Node(id=root_id, type="esm_contact_prior", value="protein_contact_map", features={"count": len(records), "source": "ESM"}))
+    edges.append(Edge(src="task", dst=root_id, type="has_contact_prior"))
+    for idx, contact in enumerate(records):
+        i = int(contact["i"])
+        j = int(contact["j"])
+        prob = float(contact["probability"])
+        bin_label = _contact_bin(prob)
+        node_id = f"esm_contact_{idx}"
+        nodes.append(
+            Node(
+                id=node_id,
+                type="esm_contact_pair",
+                value=f"{i}:{j}:{bin_label}",
+                features={"i": i, "j": j, "probability": round(prob, 6), "bin": bin_label, "source": contact.get("source", "esm_contact_prior")},
+            )
+        )
+        edges.append(Edge(src=root_id, dst=node_id, type="contains_contact_pair"))
+        src = f"protein_{i - 1}"
+        dst = f"protein_{j - 1}"
+        if any(node.id == src for node in nodes) and any(node.id == dst for node in nodes):
+            edges.append(Edge(src=src, dst=dst, type="esm_predicted_contact", features={"probability": round(prob, 6), "bin": bin_label}))
+        tokens.append(f"ESM_CONTACT:{bin_label}")
+    return tokens
 
 
 def _add_selfies(nodes: list[Node], edges: list[Edge], selfies: str, max_len: int = 160) -> list[str]:
@@ -1213,6 +1279,9 @@ def graphify_multimodal(
 ) -> GraphExample:
     original_row = dict(row)
     row = sanitize_row_for_phase(row, molecular_input_policy)
+    force_bioselfies_inputs = bool(row.get("force_bioselfies_inputs") or row.get("selfies_all_modalities") or row.get("bio_selfies_all_modalities"))
+    for key, value in modality_bioselfies_fields(row).items():
+        row.setdefault(key, value)
     prompt = _as_str(row.get("prompt") or row.get("instruction") or row.get("text") or "Generate a graph-structured scientific output.")
     task_value = _as_str(row.get("task") or row.get("target_task") or "sequence_or_selfies_reconstruction")
     raw_temp = row.get("temperature") or row.get("temp") or row.get("T")
@@ -1229,7 +1298,7 @@ def graphify_multimodal(
     sequence_modalities: list[str] = []
     bioselfies_text = _as_str(row.get("bioselfies") or row.get("bio_selfies") or row.get("BioSELFIES"))
     representation = _as_str(row.get("input_representation") or row.get("tokenizer")).lower()
-    bioselfies_only = bool(row.get("bioselfies_only")) or representation in {"bioselfies", "bio_selfies", "bio-selfies"}
+    bioselfies_only = force_bioselfies_inputs or bool(row.get("bioselfies_only")) or representation in {"bioselfies", "bio_selfies", "bio-selfies", "selfies"}
     if bioselfies_only and not bioselfies_text:
         bioselfies_text = bioselfies_from_modalities(row)
     bioselfies_result = None
@@ -1243,6 +1312,7 @@ def graphify_multimodal(
         sequence_modalities.append("protein")
         target_tokens.append("UGM:modality:protein")
         target_tokens.extend(_add_sequence(nodes, edges, protein_sequence, "protein", "protein_sequence", "amino_acid", "contains_residue", "AA", 512))
+        target_tokens.extend(_add_contact_prior_nodes(nodes, edges, row))
 
     selfies = _as_str(row.get("selfies") or row.get("SELFIES"))
     if selfies and not bioselfies_only:
@@ -1307,6 +1377,15 @@ def graphify_multimodal(
         metadata={
             "source_dataset": dataset_name,
             "task": task_value,
+            "protein_sequence": protein_sequence[:8192],
+            "dna_sequence": dna_sequence[:8192],
+            "rna_sequence": rna_sequence[:8192],
+            "selfies": selfies[:8192],
+            "protein_bioselfies": _as_str(row.get("protein_bioselfies"))[:8192],
+            "dna_bioselfies": _as_str(row.get("dna_bioselfies"))[:8192],
+            "rna_bioselfies": _as_str(row.get("rna_bioselfies"))[:8192],
+            "molecule_selfies": _as_str(row.get("molecule_selfies"))[:8192],
+            "smiles": smiles[:8192],
             "temperature": round(temp_k, 4) if temp_k is not None else None,
             "temperature_anchor": temp_anchor,
             "temperature_range_k": [TEMPERATURE_MIN_K, TEMPERATURE_MAX_K],

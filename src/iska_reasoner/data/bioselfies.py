@@ -108,13 +108,19 @@ def tokenize_bioselfies(text: str) -> list[str]:
     return [f"[UNK:{piece}]" for piece in re.findall(r"\S+", raw)]
 
 
-def bioselfies_from_modalities(row: dict[str, Any], max_len: int = 512) -> str:
+BIOSELFIES_MAX_INPUT_TOKENS = 8192
+
+
+def bioselfies_from_modalities(row: dict[str, Any], max_len: int = BIOSELFIES_MAX_INPUT_TOKENS) -> str:
     """Serialize non-structural sequence/string fields into BioSELFIES tokens."""
     tokens: list[str] = []
     protein = str(row.get("protein_sequence") or row.get("sequence") or row.get("aa_sequence") or "")
     dna = str(row.get("dna_sequence") or row.get("dna") or "")
     rna = str(row.get("rna_sequence") or row.get("rna") or "")
-    selfies = str(row.get("selfies") or row.get("SELFIES") or "")
+    selfies = str(row.get("selfies") or row.get("SELFIES") or row.get("molecule_selfies") or "")
+    if not selfies:
+        smiles = str(row.get("smiles") or row.get("SMILES") or row.get("canonical_smiles") or row.get("ligand_smiles") or "")
+        selfies = smiles_to_selfies_text(smiles)
     if protein:
         for char in re.sub(r"\s+", "", protein).upper():
             if char.isalpha():
@@ -138,6 +144,43 @@ def bioselfies_from_modalities(row: dict[str, Any], max_len: int = 512) -> str:
     return "".join(tokens[:max_len])
 
 
+def modality_bioselfies_fields(row: dict[str, Any], max_len: int = BIOSELFIES_MAX_INPUT_TOKENS) -> dict[str, str]:
+    """Return SELFIES/BioSELFIES strings for protein, DNA, RNA, and molecule fields."""
+    protein = str(row.get("protein_sequence") or row.get("sequence") or row.get("aa_sequence") or "")
+    dna = str(row.get("dna_sequence") or row.get("dna") or "")
+    rna = str(row.get("rna_sequence") or row.get("rna") or "")
+    selfies = str(row.get("selfies") or row.get("SELFIES") or row.get("molecule_selfies") or "")
+    if not selfies:
+        smiles = str(row.get("smiles") or row.get("SMILES") or row.get("canonical_smiles") or row.get("ligand_smiles") or "")
+        selfies = smiles_to_selfies_text(smiles)
+    fields: dict[str, str] = {}
+    if protein:
+        fields["protein_bioselfies"] = "".join(f"[AA:{char if char in AA_CODES else 'X'}]" for char in re.sub(r"\s+", "", protein).upper() if char.isalpha())[:max_len]
+    if dna:
+        fields["dna_bioselfies"] = "".join(f"[DNA:{char if char in DNA_CODES else 'N'}]" for char in re.sub(r"\s+", "", dna).upper() if char.isalpha())[:max_len]
+    if rna:
+        fields["rna_bioselfies"] = "".join(f"[RNA:{char if char in RNA_CODES else 'N'}]" for char in re.sub(r"\s+", "", rna).upper() if char.isalpha())[:max_len]
+    if selfies:
+        fields["molecule_selfies"] = "".join(tokenize_bioselfies(selfies))[:max_len]
+    combined = bioselfies_from_modalities(row, max_len=max_len)
+    if combined:
+        fields["bioselfies"] = combined
+    return fields
+
+
+def smiles_to_selfies_text(smiles: str) -> str:
+    """Best-effort SMILES-to-SELFIES conversion without making SELFIES required."""
+    text = str(smiles or "").strip()
+    if not text:
+        return ""
+    try:
+        import selfies as sf  # type: ignore
+
+        return str(sf.encoder(text))
+    except Exception:
+        return ""
+
+
 def reference_bioselfies_tokens() -> list[str]:
     tokens: list[str] = ["UGM:tokenizer:bioselfies", "UGM:tokenizer:hybrid_multiresolution", "UGM:modality:bioselfies"]
     tokens.extend(f"BIOSELFIES:[AA:{aa}]" for aa in sorted(AA_CODES))
@@ -158,7 +201,7 @@ def add_bioselfies_graph(
     text: str,
     *,
     root_id: str = "bioselfies",
-    max_tokens: int = 512,
+    max_tokens: int = BIOSELFIES_MAX_INPUT_TOKENS,
 ) -> BioSelfiesDecodeResult:
     """Decode a supported BioSELFIES subset into graph tokens.
 

@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from tqdm.auto import tqdm
 
+from iska_reasoner.data.bioselfies import modality_bioselfies_fields
 from iska_reasoner.data.graphify import graphify_rows
 from iska_reasoner.utils.io import ensure_dir, write_jsonl
 
@@ -166,6 +167,9 @@ def normalize_row(row: dict[str, Any], kind: str) -> dict[str, Any]:
             out.setdefault("function_description", function_text)
         out.setdefault("task", row.get("task") or "function_description")
         out.setdefault("prompt", row.get("prompt") or "Generate sequence-grounded protein function records.")
+    elif kind in {"omg", "omg_mixed", "open_metagenome"}:
+        out.setdefault("task", row.get("task") or "omg_mixed_metagenomic_context")
+        out.setdefault("prompt", row.get("prompt") or "Generate mixed CDS/IGS metagenomic context graph records.")
     elif kind in {"materials", "materials_project"}:
         out.setdefault("formula", row.get("formula_pretty") or row.get("formula") or row.get("material_formula"))
         out.setdefault("mpid", row.get("material_id") or row.get("mpid") or row.get("Materials Project ID"))
@@ -191,6 +195,30 @@ def normalize_row(row: dict[str, Any], kind: str) -> dict[str, Any]:
         out.setdefault("affinity_type", row.get("affinity_type") or row.get("measure") or row.get("standard_type"))
         out.setdefault("affinity_units", row.get("affinity_units") or row.get("units") or row.get("standard_units"))
         out.setdefault("interaction_type", row.get("interaction_type") or row.get("complex_type") or row.get("assay_type"))
+    if kind in {
+        "pubchem",
+        "uniprot",
+        "uniprot_features",
+        "refseq",
+        "ncbi",
+        "ec",
+        "sfm",
+        "naturelm",
+        "protrek",
+        "protein_function",
+        "chembl",
+        "bindingdb",
+        "bioactivity",
+        "pdbbind",
+        "docking",
+        "complex_affinity",
+        "biomolecular_affinity",
+        "ppi_affinity",
+        "protein_na_affinity",
+    }:
+        for key, value in modality_bioselfies_fields(out).items():
+            out.setdefault(key, value)
+        out.setdefault("force_bioselfies_inputs", True)
     return out
 
 
@@ -226,6 +254,9 @@ def main() -> None:
             "naturelm",
             "protrek",
             "protein_function",
+            "omg",
+            "omg_mixed",
+            "open_metagenome",
             "materials",
             "materials_project",
             "chembl",

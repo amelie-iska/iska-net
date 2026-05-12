@@ -60,6 +60,55 @@ def _as_text_list(value: Any) -> list[str]:
     return [str(value)] if str(value).strip() else []
 
 
+def _as_sequence_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    if isinstance(value, tuple):
+        return [str(item) for item in value if str(item).strip()]
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                parsed = ast.literal_eval(text)
+                if isinstance(parsed, (list, tuple)):
+                    return [str(item) for item in parsed if str(item).strip()]
+            except Exception:
+                try:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, list):
+                        return [str(item) for item in parsed if str(item).strip()]
+                except Exception:
+                    pass
+        return [text]
+    return [str(value)] if str(value).strip() else []
+
+
+def _as_index_list(value: Any) -> list[int]:
+    out: list[int] = []
+    for item in _as_sequence_list(value):
+        try:
+            out.append(int(item))
+        except Exception:
+            for piece in re.findall(r"-?\d+", item):
+                try:
+                    out.append(int(piece))
+                except Exception:
+                    pass
+    return out
+
+
+def _as_bool_list(value: Any) -> list[bool]:
+    out: list[bool] = []
+    for item in _as_sequence_list(value):
+        text = str(item).strip().lower()
+        out.append(text in {"1", "true", "t", "+", "plus", "forward"})
+    return out
+
+
 def _motif_items(value: Any) -> list[Any]:
     if value is None:
         return []
@@ -148,6 +197,57 @@ def _affinity_value(row: dict[str, Any]) -> tuple[str, str, str]:
             units = _first_text(row, ("affinity_units", "units", "standard_units", "Standard Units"))
             return _normalize_measure(measure), str(value).strip(), units
     return _normalize_measure(measure), "", _first_text(row, ("affinity_units", "units", "standard_units", "Standard Units"))
+
+
+def _numeric_affinity_strength(measure: str, value: str, units: str) -> tuple[float | None, str]:
+    try:
+        numeric = float(re.sub(r"[^0-9.eE+-]", "", str(value)))
+    except Exception:
+        return None, "unknown"
+    measure_norm = _normalize_measure(measure).lower()
+    units_norm = normalize_fragment(units).lower()
+    molar = numeric
+    if units_norm in {"pm", "picomolar"}:
+        molar *= 1e-12
+    elif units_norm in {"nm", "nanomolar"}:
+        molar *= 1e-9
+    elif units_norm in {"um", "micromolar", "µm"}:
+        molar *= 1e-6
+    elif units_norm in {"mm", "millimolar"}:
+        molar *= 1e-3
+    elif units_norm in {"m", "molar"}:
+        molar *= 1.0
+    elif measure_norm == "dg":
+        if numeric <= -10:
+            return 0.95, "very_strong"
+        if numeric <= -7:
+            return 0.75, "strong"
+        if numeric <= -5:
+            return 0.5, "moderate"
+        return 0.25, "weak"
+    if measure_norm in {"kd", "ki", "ic50", "ec50", "affinity"}:
+        if molar <= 1e-10:
+            return 0.95, "very_strong"
+        if molar <= 1e-8:
+            return 0.80, "strong"
+        if molar <= 1e-6:
+            return 0.55, "moderate"
+        if molar <= 1e-4:
+            return 0.30, "weak"
+        return 0.15, "very_weak"
+    if measure_norm == "kon":
+        if numeric >= 1e6:
+            return 0.80, "strong"
+        if numeric >= 1e4:
+            return 0.55, "moderate"
+        return 0.25, "weak"
+    if measure_norm == "koff":
+        if numeric <= 1e-4:
+            return 0.85, "strong"
+        if numeric <= 1e-2:
+            return 0.55, "moderate"
+        return 0.25, "weak"
+    return None, "unknown"
 
 
 def _add_uniprot_annotations(
@@ -347,7 +447,7 @@ def _bioselfies_from_components(row: dict[str, Any], components: Iterable[tuple[
             tokens.extend(re.findall(r"\[[^\[\]]+\]", smiles_to_selfies(clean)))
         elif kind_norm in {"ligand_selfies", "selfies"}:
             tokens.extend(re.findall(r"\[[^\[\]]+\]", clean))
-    return "".join(tokens[:512])
+    return "".join(tokens[:8192])
 
 
 def _add_bioselfies_and_structure_dynamics(
@@ -1161,9 +1261,100 @@ def _complex_components(row: dict[str, Any]) -> list[tuple[str, str, str]]:
     return components
 
 
+def _component_bioselfies_token(kind: str, value: str) -> str:
+    kind_norm = normalize_fragment(kind)
+    local: dict[str, Any] = {}
+    if kind_norm == "protein":
+        local["protein_sequence"] = value
+        return bioselfies_from_modalities(local)
+    if kind_norm == "rna":
+        local["rna_sequence"] = value
+        return bioselfies_from_modalities(local)
+    if kind_norm == "dna":
+        local["dna_sequence"] = value
+        return bioselfies_from_modalities(local)
+    if kind_norm in {"ligand", "smiles"}:
+        return smiles_to_selfies(value)
+    if kind_norm in {"ligand_selfies", "selfies"}:
+        return value
+    return ""
+
+
 def _has_complex_affinity(row: dict[str, Any]) -> bool:
     _measure, value, _units = _affinity_value(row)
     return bool(value) and len(_complex_components(row)) >= 2
+
+
+def _add_affinity_contact_priors(
+    nodes: list[Node],
+    edges: list[Edge],
+    target_tokens: list[str],
+    components: list[tuple[str, str, str]],
+    *,
+    measure: str,
+    affinity: str,
+    units: str,
+    interaction_type: str,
+) -> None:
+    if not affinity or len(components) < 2:
+        return
+    strength, label = _numeric_affinity_strength(measure, affinity, units)
+    strength_features = {"measure": measure, "value": affinity, "units": units, "strength_label": label}
+    if strength is not None:
+        strength_features["strength"] = round(strength, 6)
+    nodes.append(Node(id="affinity_contact_prior", type="affinity_contact_prior", value=label, features=strength_features))
+    edges.append(Edge(src="affinity", dst="affinity_contact_prior", type="weights_interface_prior"))
+    target_tokens.extend(
+        [
+            "CONTACT_PATCH:affinity_weighted_interface",
+            f"AFFINITY_CONTACT:{_normalize_measure(measure)}:{label}",
+            "JACOBIAN_CONTACT:affinity_weighted_interface",
+        ]
+    )
+    protein_indices = [idx for idx, (kind, _value, _name) in enumerate(components[:8]) if kind == "protein"]
+    for pair_idx, src_idx in enumerate(range(min(len(components), 8))):
+        for dst_idx in range(src_idx + 1, min(len(components), 8)):
+            src_kind, src_seq, _src_name = components[src_idx]
+            dst_kind, dst_seq, _dst_name = components[dst_idx]
+            node_id = f"interface_prior_{pair_idx}_{src_idx}_{dst_idx}"
+            pair_idx += 1
+            pair_type = f"{src_kind}_{dst_kind}"
+            features = {
+                **strength_features,
+                "interaction_type": interaction_type,
+                "component_i": src_idx,
+                "component_j": dst_idx,
+                "pair_type": pair_type,
+            }
+            nodes.append(Node(id=node_id, type="affinity_weighted_interface_prior", value=pair_type, features=features))
+            edges.append(Edge(src=f"component{src_idx}", dst=node_id, type="has_interface_prior"))
+            edges.append(Edge(src=f"component{dst_idx}", dst=node_id, type="has_interface_prior"))
+            edges.append(Edge(src="affinity_contact_prior", dst=node_id, type="weights_pair_interface"))
+            target_tokens.append(f"COMPLEX_CONTACT:{normalize_fragment(pair_type)}:{label}")
+            if src_kind == "protein" and dst_kind == "protein":
+                target_tokens.append("PPI_CONTACT:affinity_weighted")
+                for rank, frac in enumerate((0.25, 0.5, 0.75)):
+                    src_res = max(1, min(len(src_seq), int(len(src_seq) * frac) or 1))
+                    dst_res = max(1, min(len(dst_seq), int(len(dst_seq) * (1.0 - frac)) or 1))
+                    contact_id = f"ppi_affinity_contact_{src_idx}_{dst_idx}_{rank}"
+                    nodes.append(
+                        Node(
+                            id=contact_id,
+                            type="ppi_affinity_contact_candidate",
+                            value=f"{src_res}:{dst_res}:{label}",
+                            features={
+                                "component_i": src_idx,
+                                "component_j": dst_idx,
+                                "residue_i": src_res,
+                                "residue_j": dst_res,
+                                "strength_label": label,
+                                "strength": round(strength, 6) if strength is not None else None,
+                            },
+                        )
+                    )
+                    edges.append(Edge(src=node_id, dst=contact_id, type="proposes_affinity_weighted_contact"))
+    if len(protein_indices) >= 2:
+        target_tokens.append("CONTACT_PATCH:protein_protein_interface")
 
 
 def graphify_biomolecular_complex_affinity(row: dict[str, Any], idx: int, dataset_name: str) -> GraphExample:
@@ -1185,6 +1376,12 @@ def graphify_biomolecular_complex_affinity(row: dict[str, Any], idx: int, datase
         nodes.append(Node(id=node_id, type=node_type, value=value[:2048], features={"component_index": comp_idx, "component_name": name, "component_kind": kind, "length": len(value)}))
         edges.append(Edge(src="complex", dst=node_id, type="has_component"))
         target_tokens.append(f"COMPLEX:component:{kind}")
+        component_selfies = _component_bioselfies_token(kind, value)
+        if component_selfies:
+            selfies_node_id = f"component{comp_idx}_selfies"
+            nodes.append(Node(id=selfies_node_id, type="component_selfies", value=component_selfies[:8192], features={"component_index": comp_idx, "component_kind": kind}))
+            edges.append(Edge(src=node_id, dst=selfies_node_id, type="serialized_as_selfies"))
+            target_tokens.append(f"COMPONENT_SELFIES:{kind}")
         if kind == "protein":
             residue_nodes, residue_edges = _sequence_nodes(value, f"component{comp_idx}_res", "amino_acid", max_len=128)
             nodes.extend(residue_nodes)
@@ -1205,6 +1402,16 @@ def graphify_biomolecular_complex_affinity(row: dict[str, Any], idx: int, datase
         nodes.append(Node(id="affinity", type="binding_affinity", value=affinity, features={"measure": measure, "units": units}))
         edges.append(Edge(src="complex", dst="affinity", type="has_affinity_measurement"))
         target_tokens.append(f"AFFINITY:{measure}:{affinity[:80]}{units[:24]}")
+        _add_affinity_contact_priors(
+            nodes,
+            edges,
+            target_tokens,
+            components,
+            measure=measure,
+            affinity=affinity,
+            units=units,
+            interaction_type=interaction_type,
+        )
     for condition_key, node_type, token_prefix in [
         ("temperature", "temperature", "TEMP"),
         ("pH", "ph", "PH"),
@@ -1433,6 +1640,126 @@ def graphify_generic(row: dict[str, Any], idx: int, dataset_name: str) -> GraphE
     return ex
 
 
+def _omg_contact_records(row: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = row.get("categorical_jacobian_contacts") or row.get("jacobian_contacts") or row.get("glm2_contacts") or []
+    if isinstance(raw, dict):
+        raw = raw.get("contacts") or raw.get("pairs") or []
+    records: list[dict[str, Any]] = []
+    for item in _as_sequence_list(raw) if isinstance(raw, str) else list(raw or []):
+        try:
+            if isinstance(item, dict):
+                src = int(item.get("src", item.get("i", item.get("residue_i", 0))))
+                dst = int(item.get("dst", item.get("j", item.get("residue_j", 0))))
+                score = float(item.get("score", item.get("probability", item.get("jacobian", 0.0))))
+                kind = str(item.get("kind") or item.get("type") or "categorical_jacobian")
+            elif isinstance(item, (list, tuple)) and len(item) >= 3:
+                src, dst, score = int(item[0]), int(item[1]), float(item[2])
+                kind = "categorical_jacobian"
+            else:
+                continue
+        except Exception:
+            continue
+        if src > 0 and dst > 0 and src != dst:
+            records.append({"src": src, "dst": dst, "score": score, "kind": kind})
+    return records
+
+
+def graphify_omg_mixed_contig(row: dict[str, Any], idx: int, dataset_name: str) -> GraphExample:
+    cds_seqs = _as_sequence_list(row.get("CDS_seqs") or row.get("cds_seqs") or row.get("protein_sequences"))
+    igs_seqs = _as_sequence_list(row.get("IGS_seqs") or row.get("igs_seqs") or row.get("intergenic_sequences"))
+    cds_ids = _as_sequence_list(row.get("CDS_ids") or row.get("cds_ids"))
+    igs_ids = _as_sequence_list(row.get("IGS_ids") or row.get("igs_ids"))
+    cds_positions = _as_index_list(row.get("CDS_position_ids") or row.get("cds_position_ids")) or list(range(1, 2 * len(cds_seqs) + 1, 2))
+    igs_positions = _as_index_list(row.get("IGS_position_ids") or row.get("igs_position_ids")) or list(range(0, 2 * len(igs_seqs), 2))
+    orientations = _as_bool_list(row.get("CDS_orientations") or row.get("cds_orientations"))
+    nodes = [
+        Node(id="domain", type="science_domain", value="open_metagenome"),
+        Node(id="contig", type="omg_mixed_contig", value=str(row.get("contig_id") or row.get("sample_id") or row.get("id") or idx), features={"cds_count": len(cds_seqs), "igs_count": len(igs_seqs)}),
+    ]
+    edges = [Edge(src="domain", dst="contig", type="has_omg_contig")]
+    target_tokens = [
+        "OMG:mixed_modality_contig",
+        "OMG:cds_igs_interleaved",
+        "UGM:tokenizer:bioselfies",
+        "UGM:modality:bioselfies",
+        f"OMG:cds_count:{min(len(cds_seqs), 64)}",
+        f"OMG:igs_count:{min(len(igs_seqs), 64)}",
+    ]
+    if igs_seqs:
+        target_tokens.extend(["OMG:has_intergenic_sequence", "GLM2_CONTEXT:intergenic_regulatory_syntax"])
+    if len(cds_seqs) >= 2:
+        target_tokens.extend(["CONTACT_PATCH:categorical_jacobian", "JACOBIAN_CONTACT:inter_cds_candidate"])
+    elements: list[tuple[int, str, int, str, str, bool | None]] = []
+    for i, seq in enumerate(cds_seqs):
+        elements.append((cds_positions[i] if i < len(cds_positions) else 2 * i + 1, "cds", i, seq, cds_ids[i] if i < len(cds_ids) else f"CDS_{i}", orientations[i] if i < len(orientations) else None))
+    for i, seq in enumerate(igs_seqs):
+        elements.append((igs_positions[i] if i < len(igs_positions) else 2 * i, "igs", i, seq, igs_ids[i] if i < len(igs_ids) else f"IGS_{i}", None))
+    elements.sort(key=lambda item: item[0])
+    prev_node = "contig"
+    for element_order, (position, kind, local_idx, seq, source_id, orientation) in enumerate(elements[:1000]):
+        node_id = f"{kind}{local_idx}"
+        clean = re.sub(r"\s+", "", seq)
+        features: dict[str, Any] = {"position_id": position, "source_id": source_id[:256], "length": len(clean), "element_order": element_order}
+        if orientation is not None:
+            features["orientation"] = "+" if orientation else "-"
+        if kind == "cds":
+            clean = clean.upper()
+            cds_bioselfies = bioselfies_from_modalities({"protein_sequence": clean})
+            features["bioselfies"] = cds_bioselfies[:8192]
+            nodes.append(Node(id=node_id, type="omg_cds", value=cds_bioselfies[:8192], features={**features, "native_sequence": clean[:2048]}))
+            edges.append(Edge(src="contig", dst=node_id, type="contains_cds"))
+            orient_token = "PLUS" if orientation is not False else "MINUS"
+            target_tokens.append(f"OMG_CDS_ORIENT:{orient_token}")
+            target_tokens.append("COMPONENT_SELFIES:protein")
+            for aa_idx, aa in enumerate(clean[:96]):
+                res_id = f"{node_id}_aa{aa_idx}"
+                nodes.append(Node(id=res_id, type="omg_cds_amino_acid", value=aa, features={"index": aa_idx, "cds_index": local_idx}))
+                edges.append(Edge(src=node_id, dst=res_id, type="contains_residue"))
+                if aa_idx:
+                    edges.append(Edge(src=f"{node_id}_aa{aa_idx-1}", dst=res_id, type="sequence_next"))
+                target_tokens.append(f"OMG_AA:{aa}")
+        else:
+            clean = clean.lower()
+            igs_bioselfies = bioselfies_from_modalities({"dna_sequence": clean})
+            features["bioselfies"] = igs_bioselfies[:8192]
+            nodes.append(Node(id=node_id, type="omg_igs", value=igs_bioselfies[:8192], features={**features, "native_sequence": clean[:2048]}))
+            edges.append(Edge(src="contig", dst=node_id, type="contains_intergenic_sequence"))
+            target_tokens.append("COMPONENT_SELFIES:dna")
+            for nt_idx, nt in enumerate(clean[:128]):
+                nt_id = f"{node_id}_nt{nt_idx}"
+                nodes.append(Node(id=nt_id, type="omg_igs_nucleotide", value=nt, features={"index": nt_idx, "igs_index": local_idx}))
+                edges.append(Edge(src=node_id, dst=nt_id, type="contains_nucleotide"))
+                if nt_idx:
+                    edges.append(Edge(src=f"{node_id}_nt{nt_idx-1}", dst=nt_id, type="sequence_next"))
+                target_tokens.append(f"OMG_IGS:{nt.upper()}")
+        if prev_node != "contig":
+            edges.append(Edge(src=prev_node, dst=node_id, type="genomic_element_next"))
+        prev_node = node_id
+    for contact_idx, contact in enumerate(_omg_contact_records(row)[:256]):
+        node_id = f"jacobian_contact{contact_idx}"
+        score = float(contact["score"])
+        nodes.append(Node(id=node_id, type="categorical_jacobian_contact", value=f"{contact['src']}:{contact['dst']}:{score:.4f}", features=contact))
+        edges.append(Edge(src="contig", dst=node_id, type="has_categorical_jacobian_contact"))
+        target_tokens.append("CONTACT_PATCH:categorical_jacobian")
+        target_tokens.append(f"JACOBIAN_CONTACT:{normalize_fragment(contact['kind'])}")
+    ex = GraphExample(
+        id=f"{dataset_name}_{idx}_{_stable_id(str(row.get('id') or '') + ''.join(cds_seqs[:2]) + ''.join(igs_seqs[:2]))}",
+        task="omg_mixed_metagenomic_context",
+        nodes=nodes,
+        edges=edges,
+        target_tokens=list(dict.fromkeys(target_tokens)),
+        metadata={
+            "source_dataset": dataset_name,
+            "cds_count": len(cds_seqs),
+            "igs_count": len(igs_seqs),
+            "has_intergenic_sequence": bool(igs_seqs),
+            "license_warning": "OMG is CC-BY-SA-4.0; preserve attribution/share-alike requirements before scaling.",
+        },
+    )
+    ex.decoder_orders = build_orders(ex.target_tokens, seed=idx)
+    return ex
+
+
 def graphify_hebrew_row(row: dict[str, Any], idx: int, dataset_name: str) -> GraphExample:
     lname = dataset_name.lower()
     instruction = str(row.get("instruction") or "")
@@ -1484,6 +1811,8 @@ def graphify_rows(rows: Iterable[dict[str, Any]], dataset_name: str, start_idx: 
         molecular_input_policy = ALLOW_STRUCTURE if "structure_dynamics" in lname else SEQUENCE_ONLY
         if "graphwalk" in lname or "graphinstruct" in lname or ("graphwiz" in lname and (row.get("query") or row.get("answer"))):
             ex = graphify_graph_reasoning(row, idx, dataset_name)
+        elif "omg" in lname or "open_metagenome" in lname or row.get("CDS_seqs") or row.get("IGS_seqs"):
+            ex = graphify_omg_mixed_contig(row, idx, dataset_name)
         elif "local_audio" in lname or row.get("local_audio_path") or row.get("audio_path"):
             ex = graphify_local_audio(row, idx, dataset_name)
         elif "complex_affinity" in lname or "biomolecular_affinity" in lname or "ppi_affinity" in lname or _has_complex_affinity(row):

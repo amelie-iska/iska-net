@@ -31,6 +31,11 @@ STRUCTURE_DYNAMICS_PREFIXES = (
     "INTERNAL_COORD:",
     "ADAPTIVE_PATCH:",
     "CONTACT_PATCH:",
+    "JACOBIAN_CONTACT:",
+    "AFFINITY_CONTACT:",
+    "COMPLEX_CONTACT:",
+    "PPI_CONTACT:",
+    "ESM_CONTACT:",
     "HBOND:",
     "TORSION:",
     "HYBRID:",
@@ -39,9 +44,18 @@ STRUCTURE_DYNAMICS_PREFIXES = (
     "CARTESIAN_FRAME:",
 )
 
-CARTESIAN_PROTEIN_ATOMS = ("N", "CA", "C", "O", "CB", "CG", "CD", "CE", "NZ", "OD1", "OD2", "OE1", "OE2", "SG")
-CARTESIAN_NUCLEIC_ATOMS = ("P", "OP1", "OP2", "O5P", "C5P", "C4P", "C3P", "O3P", "C2P", "C1P", "N1", "N9")
+CARTESIAN_PROTEIN_ATOMS = ("H", "N", "CA", "HA", "C", "O", "CB", "CG", "CD", "CE", "NZ", "OD1", "OD2", "OE1", "OE2", "SG")
+CARTESIAN_NUCLEIC_ATOMS = ("H", "P", "OP1", "OP2", "O5P", "C5P", "C4P", "C3P", "O3P", "C2P", "C1P", "N1", "N9")
 CARTESIAN_LIGAND_ATOMS = ("H", "C", "N", "O", "P", "S", "F", "Cl", "Br", "I", "heavy_atom")
+STRUCTURE_DYNAMICS_CORE_TOKENS = (
+    "UGM:task:structure_dynamics_proxy",
+    "UGM:oracle:uma_feedback",
+    "SEQ_STRUCT_DYN_PROXY:sequence_only_input",
+    "SEQ_STRUCT_DYN_PROXY:no_structure_file",
+    "SEQ_STRUCT_DYN_PROXY:uma_scored",
+    "SEQ_STRUCT_DYN_PROXY:all_atom_cartesian",
+    "ALL_ATOM_CARTESIAN:enabled",
+)
 
 
 def _example_temperature_norm(example: Any) -> float | None:
@@ -173,7 +187,7 @@ def _derived_structure_dynamics_tokens(example: Any) -> list[str]:
         tokens.append("SEQ_STRUCT_DYN_PROXY:input:protein")
         tokens.extend(["INTERNAL_COORD:protein_phi", "INTERNAL_COORD:protein_psi", "INTERNAL_COORD:protein_omega", "INTERNAL_COORD:sidechain_chi"])
         tokens.extend(["ADAPTIVE_PATCH:residue_atom_patch", "ADAPTIVE_PATCH:open_patch", "ADAPTIVE_PATCH:close_patch"])
-        tokens.extend(["CONTACT_PATCH:long_range", "CONTACT_PATCH:hbond"])
+        tokens.extend(["CONTACT_PATCH:long_range", "CONTACT_PATCH:hbond", "CONTACT_PATCH:esm_prior", "CONTACT_PATCH:categorical_jacobian", "CONTACT_PATCH:affinity_weighted_interface", "CONTACT_PATCH:protein_protein_interface", "ESM_CONTACT:enabled", "JACOBIAN_CONTACT:inter_cds_candidate", "JACOBIAN_CONTACT:affinity_weighted_interface", "PPI_CONTACT:affinity_weighted"])
         tokens.extend(f"CARTESIAN_ATOM:protein:{atom}" for atom in CARTESIAN_PROTEIN_ATOMS)
     if "rna" in modalities or "dna" in modalities:
         for modality in sorted(modalities & {"rna", "dna"}):
@@ -218,7 +232,14 @@ def _candidate_vocab(
             if not _token_allowed(tok, include_prefixes=include_tuple, exclude_prefixes=exclude_tuple):
                 continue
             counts[tok] = counts.get(tok, 0) + 1
-    candidates = [tok for tok, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:max_actions]]
+    core_priority = {token: idx for idx, token in enumerate(STRUCTURE_DYNAMICS_CORE_TOKENS)}
+    candidates = [
+        tok
+        for tok, _ in sorted(
+            counts.items(),
+            key=lambda kv: (core_priority.get(kv[0], len(core_priority)), -kv[1], kv[0]),
+        )[:max_actions]
+    ]
     return candidates, torch.zeros(0)
 
 

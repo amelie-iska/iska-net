@@ -18,7 +18,7 @@ from iska_reasoner.data.multimodal import (
     write_mdtraj_trajectory,
 )
 from iska_reasoner.inference.structure_dynamics import (
-    derive_full_atom_records,
+    derive_full_cartesian_geometry,
     generated_initial_coordinates,
     high_quality_trajectory_score,
     smooth_trajectory_frames,
@@ -364,11 +364,40 @@ def test_biomolecular_complex_affinity_rows_support_non_ligand_complexes():
     assert "COMPLEX:component:protein" in graph_row["target_tokens"]
     assert "COMPLEX:interaction:protein_protein" in graph_row["target_tokens"]
     assert "UGM:tokenizer:bioselfies" in graph_row["target_tokens"]
+    assert "COMPONENT_SELFIES:protein" in graph_row["target_tokens"]
+    assert "CONTACT_PATCH:affinity_weighted_interface" in graph_row["target_tokens"]
+    assert "PPI_CONTACT:affinity_weighted" in graph_row["target_tokens"]
     assert "SEQ_STRUCT_DYN_PROXY:input:protein" in graph_row["target_tokens"]
     assert "CARTESIAN_ATOM:protein:CA" in graph_row["target_tokens"]
     assert any(tok.startswith("AFFINITY:Kd:12") for tok in graph_row["target_tokens"])
+    assert any(tok.startswith("AFFINITY_CONTACT:Kd:") for tok in graph_row["target_tokens"])
     assert any(node["type"] == "binding_affinity" for node in graph_row["nodes"])
+    assert any(node["type"] == "ppi_affinity_contact_candidate" for node in graph_row["nodes"])
     assert any(edge["type"] == "forms_complex_with" for edge in graph_row["edges"])
+
+
+def test_omg_mixed_contig_graphifies_cds_igs_bioselfies_and_jacobian_contacts():
+    row = {
+        "CDS_position_ids": [1, 3, 5],
+        "IGS_position_ids": [0, 2, 4, 6],
+        "CDS_ids": ["sample|contig|CDS|gene1|+|1:90", "sample|contig|CDS|gene2|-|100:210", "sample|contig|CDS|gene3|+|220:330"],
+        "IGS_ids": ["ig0", "ig1", "ig2", "ig3"],
+        "CDS_seqs": ["MKTWYV", "ACDEFG", "HIKLMN"],
+        "IGS_seqs": ["aattta", "ttgaca", "aggagg", "taa"],
+        "CDS_orientations": [True, False, True],
+        "jacobian_contacts": [{"src": 2, "dst": 9, "score": 0.77, "kind": "inter_cds_candidate"}],
+    }
+    graph_row = next(graphify_rows([row], "omg_diverse_mixed_intergenic_subsample"))
+    assert graph_row["task"] == "omg_mixed_metagenomic_context"
+    assert "OMG:mixed_modality_contig" in graph_row["target_tokens"]
+    assert "GLM2_CONTEXT:intergenic_regulatory_syntax" in graph_row["target_tokens"]
+    assert "UGM:tokenizer:bioselfies" in graph_row["target_tokens"]
+    assert "COMPONENT_SELFIES:protein" in graph_row["target_tokens"]
+    assert "COMPONENT_SELFIES:dna" in graph_row["target_tokens"]
+    assert "CONTACT_PATCH:categorical_jacobian" in graph_row["target_tokens"]
+    assert "JACOBIAN_CONTACT:inter_cds_candidate" in graph_row["target_tokens"]
+    assert any(node["type"] == "omg_igs" and "[DNA:" in node["value"] for node in graph_row["nodes"])
+    assert any(node["type"] == "categorical_jacobian_contact" for node in graph_row["nodes"])
 
 
 def test_biomed_annotations_affinity_direct_script_dry_run(tmp_path):
@@ -482,24 +511,24 @@ def test_coordinate_head_forward_backward_on_structure_batch():
     collator = RandomOrderCollator(
         vocab,
         max_source_tokens=24,
-        max_target_tokens=192,
-        max_seq_len=320,
+        max_target_tokens=384,
+        max_seq_len=768,
         max_numeric_targets=8,
         order_mode="first",
     )
     batch = collator([ex])
     cfg = RandomOrderTokenGTConfig(
         vocab_size=len(vocab.token_to_id),
-        hidden_dim=48,
-        num_layers=1,
-        num_heads=4,
-        ffn_dim=96,
-        max_seq_len=320,
-        max_nodes=128,
-        max_slots=64,
-        endpoint_dim=16,
-        identifier_dim=16,
-        coordinate_head_enabled=True,
+            hidden_dim=48,
+            num_layers=1,
+            num_heads=4,
+            ffn_dim=96,
+            max_seq_len=768,
+            max_nodes=128,
+            max_slots=384,
+            endpoint_dim=16,
+            identifier_dim=16,
+            coordinate_head_enabled=True,
         coordinate_target_scale=10.0,
     )
     model = RandomOrderTokenGT(cfg)
@@ -588,8 +617,9 @@ def test_uma_coordinate_queries_come_from_selfies_and_nucleic_sequences():
         order_mode="first",
     )
     batch = collator([molecule, nucleic])
-    assert batch["uma_coordinate_query_mask"][0].sum().item() == 3
-    assert batch["uma_coordinate_symbols"][0] == ["C", "O", "O"]
+    assert batch["uma_coordinate_query_mask"][0].sum().item() == 8
+    assert batch["uma_coordinate_symbols"][0][:4] == ["C", "C", "O", "O"]
+    assert "H" in batch["uma_coordinate_symbols"][0]
     assert batch["uma_coordinate_query_mask"][1].sum().item() == 16
     assert batch["uma_coordinate_symbols"][1][:4] == ["P", "O", "O", "O"]
 
@@ -606,19 +636,68 @@ def test_full_size_sequence_trajectory_export_records_and_hq_score():
         23,
         "local_multimodal_graph_to_graph",
     )
-    atoms = derive_full_atom_records(ex, max_atoms=5000, max_residues=500)
-    assert len(atoms) > 3000
+    geometry = derive_full_cartesian_geometry(ex, max_atoms=12000, max_residues=500)
+    atoms = geometry["atoms"]
+    assert len(atoms) > 5000
+    assert geometry["all_atom_cartesian"] is True
+    assert len(geometry["bonds"]) > 5000
+    assert any(atom["element"] == "H" for atom in atoms)
     assert atoms[0]["residue_index"] == 1
     assert atoms[-1]["residue_index"] <= 500
-    coords = generated_initial_coordinates(atoms)
+    coords = geometry["coordinates"] or generated_initial_coordinates(atoms)
+    assert len(coords) == len(atoms)
+    assert coords[-1][0] - coords[0][0] > 1000.0
     frames = smooth_trajectory_frames(atoms, coords, frame_count=8, temperature_k=325.0)
     score = high_quality_trajectory_score(atoms, frames, target_frames=8, expected_residues=500)
-    pdb = records_to_multimodel_pdb(atoms, frames, [])
+    pdb = records_to_multimodel_pdb(atoms, frames, geometry["bonds"])
     assert "HELIX" in pdb
     assert "REMARK 902 VIEWER REPRESENTATION: CARTOON RECOMMENDED" in pdb
+    assert "CONECT" in pdb
     assert score["atom_count"] == len(atoms)
     assert score["residue_count"] == 500
     assert score["long_hq_score"] > 0.5
+
+
+def test_selfies_smiles_ligand_all_atom_cartesian_geometry_has_bonds_and_hydrogens():
+    ex = graphify_multimodal(
+        {
+            "task": "structure_dynamics_proxy",
+            "selfies": "[C][=O][O]",
+            "smiles": "CC(=O)O",
+            "temperature": 325.0,
+            "oracle": {"name": "uma"},
+        },
+        24,
+        "local_multimodal_graph_to_graph",
+    )
+    geometry = derive_full_cartesian_geometry(ex, max_atoms=64, max_residues=0)
+    atoms = geometry["atoms"]
+    coords = geometry["coordinates"] or generated_initial_coordinates(atoms)
+    assert geometry["all_atom_cartesian"] is True
+    assert len(atoms) >= 8
+    assert len(coords) == len(atoms)
+    assert len(geometry["bonds"]) >= 7
+    assert any(atom["element"] == "H" for atom in atoms)
+    pdb = records_to_multimodel_pdb(atoms, [coords], geometry["bonds"])
+    assert "CONECT" in pdb
+
+
+def test_esm_contact_prior_rows_become_structure_dynamics_tokens_and_edges():
+    ex = graphify_multimodal(
+        {
+            "task": "structure_dynamics_proxy",
+            "protein_sequence": "MKTWYVQLAGST",
+            "esm_contacts": [{"i": 1, "j": 9, "probability": 0.83, "source": "test_esm"}],
+            "temperature": 325.0,
+            "oracle": {"name": "uma"},
+        },
+        25,
+        "local_multimodal_graph_to_graph",
+    )
+    assert "CONTACT_PATCH:esm_prior" in ex.target_tokens
+    assert "ESM_CONTACT:enabled" in ex.target_tokens
+    assert any(tok.startswith("ESM_CONTACT:b") for tok in ex.target_tokens)
+    assert any(edge.type == "esm_predicted_contact" for edge in ex.edges)
 
 
 def test_internal_coordinate_query_slots_come_from_sequence_without_structure_labels():

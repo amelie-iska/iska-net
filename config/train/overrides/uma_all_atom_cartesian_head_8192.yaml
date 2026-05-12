@@ -1,0 +1,63 @@
+model:
+  coordinate_head_enabled: true
+  internal_coordinate_head_enabled: true
+  coordinate_target_scale: 10.0
+  coordinate_logvar_min: -8.0
+  coordinate_logvar_max: 4.0
+  internal_coordinate_logvar_min: -8.0
+  internal_coordinate_logvar_max: 4.0
+  max_seq_len: 8192
+  max_nodes: 8192
+  max_slots: 1024
+  max_identifiers: 16384
+
+data:
+  # Long SELFIES/BioSELFIES and all-atom Cartesian query slots for structure-
+  # dynamics model-training phases. This is intentionally separate from the
+  # default 4090 override because 8192-token coordinate-query batches are much
+  # heavier than the normal symbolic SFT path.
+  max_source_tokens: 8192
+  max_target_tokens: 512
+  max_uma_coordinate_atoms: 8192
+  max_internal_coordinate_actions: 512
+
+loss:
+  coordinate_loss_weight: 0.0
+  uma_coordinate_oracle_weight: 0.02
+  uma_coordinate_oracle_backend: fairchem
+  uma_coordinate_oracle_every: 16
+  uma_coordinate_max_examples: 1
+  # FairChem scoring every generated atom in every optimizer step is not
+  # practical on a 24GB card. The head exposes up to 8192 all-atom slots, while
+  # the oracle loss scores a prefix/window-sized subset per feedback call.
+  uma_coordinate_max_atoms: 512
+  uma_coordinate_force_clip: 5.0
+  uma_coordinate_center_weight: 0.001
+  uma_coordinate_repulsion_weight: 0.01
+  uma_coordinate_min_distance: 0.75
+  uma_coordinate_dynamics_steps: 4
+  uma_coordinate_force_step_size: 0.015
+  uma_coordinate_repo: data/external_repos/fairchem
+  uma_coordinate_model_name: uma-s-1p2
+  uma_coordinate_task_name: omol
+  uma_coordinate_device: cuda
+  uma_coordinate_strict: false
+
+  uma_internal_coordinate_oracle_weight: 0.02
+  uma_internal_coordinate_oracle_backend: fairchem
+  uma_internal_coordinate_oracle_every: 16
+  uma_internal_coordinate_max_examples: 1
+  uma_internal_coordinate_max_actions: 512
+  uma_internal_coordinate_max_residues: 64
+  uma_internal_coordinate_max_atoms: 512
+  uma_internal_coordinate_force_clip: 5.0
+  uma_internal_coordinate_center_weight: 0.001
+  uma_internal_coordinate_repulsion_weight: 0.01
+  uma_internal_coordinate_min_distance: 0.75
+  uma_internal_coordinate_dynamics_steps: 4
+  uma_internal_coordinate_force_step_size: 0.015
+  uma_internal_coordinate_repo: data/external_repos/fairchem
+  uma_internal_coordinate_model_name: uma-s-1p2
+  uma_internal_coordinate_task_name: omol
+  uma_internal_coordinate_device: cuda
+  uma_internal_coordinate_strict: false

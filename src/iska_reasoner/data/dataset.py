@@ -79,6 +79,32 @@ AA_HEAVY_ATOM_SYMBOLS = {
     "Y": ("N", "C", "C", "O", "C", "C", "C", "C", "C", "C", "C", "O"),
     "V": ("N", "C", "C", "O", "C", "C", "C"),
 }
+AA_ALL_ATOM_COUNTS = {
+    "A": 10,
+    "R": 24,
+    "N": 14,
+    "D": 12,
+    "C": 11,
+    "E": 15,
+    "Q": 17,
+    "G": 7,
+    "H": 17,
+    "I": 19,
+    "L": 19,
+    "K": 22,
+    "M": 17,
+    "F": 20,
+    "P": 14,
+    "S": 11,
+    "T": 14,
+    "W": 24,
+    "Y": 21,
+    "V": 16,
+}
+AA_ALL_ATOM_SYMBOLS = {
+    aa: tuple(heavy) + ("H",) * max(0, AA_ALL_ATOM_COUNTS.get(aa, len(heavy)) - len(heavy))
+    for aa, heavy in AA_HEAVY_ATOM_SYMBOLS.items()
+}
 NUCLEIC_BACKBONE_SYMBOLS = ("P", "O", "O", "O", "C", "C", "C", "O", "C", "C", "O")
 NUCLEIC_BASE_HEAVY_ATOM_SYMBOLS = {
     "A": ("N", "C", "N", "C", "C", "C", "N", "C", "N"),
@@ -87,6 +113,14 @@ NUCLEIC_BASE_HEAVY_ATOM_SYMBOLS = {
     "T": ("N", "C", "O", "N", "C", "C", "C", "O"),
     "U": ("N", "C", "O", "N", "C", "C", "O"),
 }
+NUCLEIC_BASE_ALL_ATOM_SYMBOLS = {
+    "A": NUCLEIC_BASE_HEAVY_ATOM_SYMBOLS["A"] + ("H",) * 5,
+    "C": NUCLEIC_BASE_HEAVY_ATOM_SYMBOLS["C"] + ("H",) * 5,
+    "G": NUCLEIC_BASE_HEAVY_ATOM_SYMBOLS["G"] + ("H",) * 5,
+    "T": NUCLEIC_BASE_HEAVY_ATOM_SYMBOLS["T"] + ("H",) * 6,
+    "U": NUCLEIC_BASE_HEAVY_ATOM_SYMBOLS["U"] + ("H",) * 4,
+}
+NUCLEIC_BACKBONE_ALL_ATOM_SYMBOLS = NUCLEIC_BACKBONE_SYMBOLS + ("H",) * 7
 INTERNAL_COORD_TYPES = [
     "protein_phi",
     "protein_psi",
@@ -254,8 +288,20 @@ def _candidate_smiles(example: GraphExample) -> str:
     return ""
 
 
+def _candidate_selfies(example: GraphExample) -> str:
+    metadata = example.metadata or {}
+    for key in ("selfies", "SELFIES", "molecule_selfies"):
+        value = metadata.get(key)
+        if value:
+            return str(value)
+    for node in example.nodes:
+        if node.type == "selfies" and node.value:
+            return str(node.value)
+    return "".join(str(node.value or "") for node in example.nodes if node.type == "selfies_token")
+
+
 def _protein_backbone_symbols(example: GraphExample, max_atoms: int) -> list[str]:
-    """Return sequence-derived protein heavy-atom slots without structure labels."""
+    """Return sequence-derived protein all-atom slots without structure labels."""
     if max_atoms <= 0:
         return []
     sequence = ""
@@ -274,14 +320,14 @@ def _protein_backbone_symbols(example: GraphExample, max_atoms: int) -> list[str
     symbols: list[str] = []
     residue_iter = residues if residues else [char for char in sequence.upper() if char.isalpha()]
     for residue in residue_iter:
-        symbols.extend(AA_HEAVY_ATOM_SYMBOLS.get(str(residue).upper()[:1], PROTEIN_BACKBONE_SYMBOLS + ("C",)))
+        symbols.extend(AA_ALL_ATOM_SYMBOLS.get(str(residue).upper()[:1], PROTEIN_BACKBONE_SYMBOLS + ("C", "H", "H", "H")))
         if len(symbols) >= max_atoms:
             return symbols[:max_atoms]
     return symbols[:max_atoms]
 
 
 def _nucleic_acid_symbols(example: GraphExample, max_atoms: int) -> list[str]:
-    """Return sequence-derived DNA/RNA heavy-atom slots without structure labels."""
+    """Return sequence-derived DNA/RNA all-atom slots without structure labels."""
     if max_atoms <= 0:
         return []
     bases: list[tuple[str, str]] = []
@@ -302,8 +348,8 @@ def _nucleic_acid_symbols(example: GraphExample, max_atoms: int) -> list[str]:
     symbols: list[str] = []
     for _base_type, base in bases:
         base_key = str(base).upper()[:1]
-        symbols.extend(NUCLEIC_BACKBONE_SYMBOLS)
-        symbols.extend(NUCLEIC_BASE_HEAVY_ATOM_SYMBOLS.get(base_key, NUCLEIC_BASE_HEAVY_ATOM_SYMBOLS["A"]))
+        symbols.extend(NUCLEIC_BACKBONE_ALL_ATOM_SYMBOLS)
+        symbols.extend(NUCLEIC_BASE_ALL_ATOM_SYMBOLS.get(base_key, NUCLEIC_BASE_ALL_ATOM_SYMBOLS["A"]))
         if len(symbols) >= max_atoms:
             return symbols[:max_atoms]
     return symbols[:max_atoms]
@@ -315,7 +361,7 @@ def uma_coordinate_symbols(example: GraphExample, max_atoms: int) -> list[str]:
         return []
     symbols: list[str] = []
     for node in example.nodes:
-        if node.type not in {"atom", "atom_symbol", "selfies_token"}:
+        if node.type not in {"atom", "atom_symbol"}:
             continue
         raw = node.features.get("element") or node.features.get("symbol") or node.features.get("element_hint") or node.value
         symbol = str(raw).strip()
@@ -342,7 +388,16 @@ def uma_coordinate_symbols(example: GraphExample, max_atoms: int) -> list[str]:
 
     smiles = _candidate_smiles(example)
     if not smiles:
-        return []
+        selfies = _candidate_selfies(example)
+        if selfies:
+            try:
+                import selfies as sf  # type: ignore
+
+                smiles = str(sf.decoder(selfies))
+            except Exception:
+                smiles = ""
+    if not smiles:
+        return symbols[:max_atoms] if symbols else []
     try:
         from rdkit import Chem
         from rdkit import RDLogger

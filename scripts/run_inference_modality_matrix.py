@@ -21,7 +21,7 @@ from iska_reasoner.data.multimodal import graphify_multimodal
 from iska_reasoner.graph.schema import Edge, GraphExample, Node
 from iska_reasoner.inference.generate import complete_graph_tokens, load_model_for_inference, predict_uma_coordinate_frame
 from iska_reasoner.inference.structure_dynamics import (
-    derive_full_atom_records,
+    derive_full_cartesian_geometry,
     generated_initial_coordinates,
     high_quality_trajectory_score,
     smooth_trajectory_frames,
@@ -317,11 +317,14 @@ def _run_case(
         atoms = prediction.get("atoms") or []
         coords = prediction.get("coordinates") or []
         symbols = prediction.get("symbols") or [str(atom.get("element", "C")) for atom in atoms]
-        full_atoms = derive_full_atom_records(example, max_atoms=trajectory_max_atoms, max_residues=trajectory_max_residues)
+        full_geometry = derive_full_cartesian_geometry(example, max_atoms=trajectory_max_atoms, max_residues=trajectory_max_residues)
+        full_atoms = full_geometry.get("atoms", [])
+        full_bonds = full_geometry.get("bonds", [])
+        full_coords = full_geometry.get("coordinates")
         full_size_export = bool(full_atoms)
         if full_size_export:
             atoms = full_atoms
-            coords = generated_initial_coordinates(atoms, coords)
+            coords = full_coords or generated_initial_coordinates(atoms, coords)
             symbols = [str(atom.get("element", "C")) for atom in atoms]
         if atoms and coords:
             if full_size_export and (trajectory_backend == "proxy" or len(atoms) > 512):
@@ -341,11 +344,13 @@ def _run_case(
                     device_name=str(device),
                     force_step_size=trajectory_force_step_size,
                 )
-            files = _write_structure_outputs(case_dir / "structure_dynamics", atoms, frames, [], trajectory_formats)
+            files = _write_structure_outputs(case_dir / "structure_dynamics", atoms, frames, full_bonds if full_size_export else [], trajectory_formats)
             expected_residues = trajectory_max_residues if inp.name == "uniprot_500_protein" else None
             hq_score = high_quality_trajectory_score(atoms, frames, target_frames=trajectory_score_target_frames, expected_residues=expected_residues)
             structure_export = {
                 "atoms": len(atoms),
+                "bonds": len(full_bonds) if full_size_export else 0,
+                "all_atom_cartesian": full_size_export,
                 "frames": len(frames),
                 "full_size_export": full_size_export,
                 "max_residues": trajectory_max_residues,

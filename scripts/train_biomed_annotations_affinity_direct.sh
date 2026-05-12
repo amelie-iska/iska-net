@@ -63,6 +63,8 @@ ENABLE_UMA_COORDINATE_HEAD="${ENABLE_UMA_COORDINATE_HEAD:-1}"
 UMA_COORDINATE_HEAD_CONFIG="${UMA_COORDINATE_HEAD_CONFIG:-config/train/overrides/uma_coordinate_head.yaml}"
 ENABLE_UMA_INTERNAL_COORDINATES="${ENABLE_UMA_INTERNAL_COORDINATES:-1}"
 UMA_INTERNAL_COORDINATES_CONFIG="${UMA_INTERNAL_COORDINATES_CONFIG:-config/train/overrides/uma_internal_coordinates.yaml}"
+ENABLE_LONG_ALL_ATOM_CARTESIAN_HEAD="${ENABLE_LONG_ALL_ATOM_CARTESIAN_HEAD:-0}"
+UMA_ALL_ATOM_CARTESIAN_HEAD_CONFIG="${UMA_ALL_ATOM_CARTESIAN_HEAD_CONFIG:-config/train/overrides/uma_all_atom_cartesian_head_8192.yaml}"
 ENABLE_UMA_CONTACT_GEOMETRY="${ENABLE_UMA_CONTACT_GEOMETRY:-0}"
 UMA_CONTACT_GEOMETRY_CONFIG="${UMA_CONTACT_GEOMETRY_CONFIG:-config/train/overrides/uma_contact_geometry_loss.yaml}"
 EXTRA_TRAIN_CONFIGS="${EXTRA_TRAIN_CONFIGS:-}"
@@ -259,13 +261,18 @@ done
 if [[ "$ENABLE_TROPICAL_ATTENTION" == "1" ]]; then
   append_config "$TROPICAL_ATTENTION_CONFIG"
 fi
-if [[ "$ENABLE_UMA_COORDINATE_HEAD" == "1" ]]; then
-  append_config "$UMA_COORDINATE_HEAD_CONFIG"
-  EXTRA_TRAIN_CONFIGS="${EXTRA_TRAIN_CONFIGS:+$EXTRA_TRAIN_CONFIGS }$UMA_COORDINATE_HEAD_CONFIG"
-fi
-if [[ "$ENABLE_UMA_INTERNAL_COORDINATES" == "1" ]]; then
-  append_config "$UMA_INTERNAL_COORDINATES_CONFIG"
-  EXTRA_TRAIN_CONFIGS="${EXTRA_TRAIN_CONFIGS:+$EXTRA_TRAIN_CONFIGS }$UMA_INTERNAL_COORDINATES_CONFIG"
+if [[ "$ENABLE_LONG_ALL_ATOM_CARTESIAN_HEAD" == "1" ]]; then
+  append_config "$UMA_ALL_ATOM_CARTESIAN_HEAD_CONFIG"
+  EXTRA_TRAIN_CONFIGS="${EXTRA_TRAIN_CONFIGS:+$EXTRA_TRAIN_CONFIGS }$UMA_ALL_ATOM_CARTESIAN_HEAD_CONFIG"
+else
+  if [[ "$ENABLE_UMA_COORDINATE_HEAD" == "1" ]]; then
+    append_config "$UMA_COORDINATE_HEAD_CONFIG"
+    EXTRA_TRAIN_CONFIGS="${EXTRA_TRAIN_CONFIGS:+$EXTRA_TRAIN_CONFIGS }$UMA_COORDINATE_HEAD_CONFIG"
+  fi
+  if [[ "$ENABLE_UMA_INTERNAL_COORDINATES" == "1" ]]; then
+    append_config "$UMA_INTERNAL_COORDINATES_CONFIG"
+    EXTRA_TRAIN_CONFIGS="${EXTRA_TRAIN_CONFIGS:+$EXTRA_TRAIN_CONFIGS }$UMA_INTERNAL_COORDINATES_CONFIG"
+  fi
 fi
 if [[ "$ENABLE_UMA_CONTACT_GEOMETRY" == "1" ]]; then
   append_config "$UMA_CONTACT_GEOMETRY_CONFIG"
@@ -448,6 +455,9 @@ printf 'Data dir: %s\n' "$DATA_DIR"
 printf 'Include original full selected corpus: %s (%s: %s)\n' "$INCLUDE_ORIGINAL_FULL_SELECTED" "$ORIGINAL_FULL_SELECTED_DIR" "$ORIGINAL_FULL_SELECTED_SPLITS"
 printf 'Input graph files: %s\n' "${INPUT_GRAPHS[*]}"
 printf 'Train phases: %s\n' "$TRAIN_PHASES"
+printf 'Model-stage coordinate head: uma=%s internal=%s long_all_atom_8192=%s configs=%s\n' \
+  "$ENABLE_UMA_COORDINATE_HEAD" "$ENABLE_UMA_INTERNAL_COORDINATES" "$ENABLE_LONG_ALL_ATOM_CARTESIAN_HEAD" "${EXTRA_TRAIN_CONFIGS:-<none>}"
+printf 'Note: coordinate/internal-coordinate heads are model-stage overrides; standalone GFlowNet phases train token-set policies over the generated structure-dynamics candidate vocabulary.\n'
 printf 'Override:\n'
 cat "$OVERRIDE"
 

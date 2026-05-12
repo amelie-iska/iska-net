@@ -29,7 +29,19 @@ The current implementation adds the local-data contracts needed for this plan:
 - `src/iska_reasoner/data/graphify.py` converts UniProt binding/active/metal/DNA/calcium/site/domain/PTM/variant features into `UNIPROT:*` graph tokens and binding-site edges without requiring coordinates.
 - `scripts/prepare_science_sources.py --kind complex_affinity`, `biomolecular_affinity`, `ppi_affinity`, or `protein_na_affinity` normalizes biomolecular-complex affinity rows.
 - `graphify_biomolecular_complex_affinity` supports protein-protein, protein-RNA, protein-DNA, ligand-protein, ligand-RNA/DNA, and arbitrary `components` rows with `Kd`, `Ki`, `IC50`, `kon`, `koff`, or `dG`-style fields plus temperature, pH, buffer, and assay metadata.
+- All four bio input modalities now get SELFIES/BioSELFIES-side metadata: `protein_bioselfies`, `dna_bioselfies`, `rna_bioselfies`, and `molecule_selfies`, each capped at 8192 BioSELFIES tokens. SMILES-only molecule rows are converted to SELFIES when the optional `selfies` package is installed.
+- ESM-style contact priors can be cached with `scripts/build_esm_contact_priors.py` and graphified into `CONTACT_PATCH:esm_prior` and `ESM_CONTACT:*` records.
+- OMG/gLM2-style mixed metagenomic context can be subsampled with `scripts/prepare_omg_subsample.py`, preserving CDS/IGS order, strand metadata, intergenic sequence rows, and categorical-Jacobian contact records.
+- Cached categorical-Jacobian contacts can be converted with `scripts/build_categorical_jacobian_contacts.py` and used as `CONTACT_PATCH:categorical_jacobian` / `JACOBIAN_CONTACT:*` priors.
 - `data/manifests/datasets.yaml` now declares local manifest-only entries for `uniprot_features_local_export` and `biomolecular_complex_affinity_local` so these sources are intentionally user-provided rather than silently downloaded.
+
+## Contact-Prediction Additions
+
+The ESM contact-prior path follows the public ESM contact-prediction notebook pattern: tokenize the protein sequence with the ESM alphabet, run an ESM2 model, call `predict_contacts`, and cache a residue-pair probability matrix. UGM then treats high-probability pairs as predicted contact priors, not as ground-truth structure labels. These records are suitable for both training graphification and inference-time structure-dynamics prompts.
+
+The OMG/gLM2 path follows the paper's core data idea: mixed contigs contain amino-acid CDS segments and nucleotide intergenic segments, with order and strand orientation preserved. The UGM subsampler keeps a diverse subset of contigs with intergenic sequence present, so the model sees regulatory-context rows instead of only protein-only rows. Categorical-Jacobian contacts are represented as candidate contact records over CDS/residue spans. When the contact comes from protein-protein or complex context and an affinity value exists, `graphify_biomolecular_complex_affinity` also emits affinity-weighted PPI contact priors (`AFFINITY_CONTACT:*`, `PPI_CONTACT:*`, and `CONTACT_PATCH:affinity_weighted_interface`).
+
+These additions are still sequence-only/oracle-supervised in the strict addendum sense. They do not copy PDB/mmCIF/SDF coordinates, contact-map labels, force labels, or MD trajectories into policy training.
 
 ## Data Source Priorities
 
@@ -66,6 +78,8 @@ UGM now has two separate GFlowNet tracks:
 - **Structure-dynamics GFlowNet (`gflownet.mode: structure_dynamics`)** filters candidates to oracle and dynamics records such as `ALL_ATOM_CARTESIAN:*`, `CARTESIAN_ATOM:*`, `CARTESIAN_FRAME:*`, `INTERNAL_COORD:*`, `ADAPTIVE_PATCH:*`, `CONTACT_PATCH:*`, `TOKEN_MOTION:*`, temperature tokens, and UMA/force records. Use this after the model has learned the symbolic substrate and the UMA/FairChem preflight passes. If an older curated corpus lacks the explicit dynamics target family, the trainer derives these candidates from protein/DNA/RNA/SELFIES nodes so the failed GFlowNet phase can restart without repeating curation.
 
 The standard SFT phase can train on UniProt feature rows and affinity rows directly. The structure-dynamics phase then uses those annotations as context: binding residues and complex components become places where BioSELFIES-conditioned all-atom Cartesian coordinate proposals, internal-coordinate actions, contact patches, adaptive atom patches, and UMA-scored geometry proposals should concentrate.
+
+The coordinate head is enabled in model-training phases, not in the standalone GFlowNet trainer. The normal 4090 path uses `config/train/overrides/uma_coordinate_head.yaml` plus `config/train/overrides/uma_internal_coordinates.yaml`. Full-size all-atom Cartesian experiments use `config/train/overrides/uma_all_atom_cartesian_head_8192.yaml`, which exposes up to 8192 all-atom coordinate-query slots while scoring a tractable FairChem/UMA subset per feedback call. If the 250M profile is too large at 8192 context, switch only the model config to `config/model/ugm_120m_tokengt_8192_selfies.yaml`.
 
 ## Current Full Local Corpus Status
 

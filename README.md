@@ -773,7 +773,7 @@ Direct UniProt plus biomolecular-affinity training, with full local source prepa
 ./scripts/run_full_biomed_annotations_affinity_training.sh
 ```
 
-This uses `config/model/ugm_250m_tokengt.yaml`, `config/data/biomed_annotations_affinity_250m.yaml`, `config/train/biomed_annotations_affinity_250m.yaml`, `config/train/biomed_annotations_affinity_gflownet_sft_4090.yaml`, and `config/train/biomed_annotations_affinity_structure_dynamics_gflownet_4090.yaml`. It defaults to hybrid Flash/MHTA plus UMA coordinate and internal-coordinate heads. The full local source set is 2,411,356 data rows: 574,627 UniProt feature rows plus 1,836,729 biomolecular complex-affinity rows. Add `INCLUDE_ORIGINAL_FULL_SELECTED=1` to include the original 7,328,008-row selected public corpus in the same curated training dataset.
+This uses `config/model/ugm_250m_tokengt.yaml`, `config/data/biomed_annotations_affinity_250m.yaml`, `config/train/biomed_annotations_affinity_250m.yaml`, `config/train/biomed_annotations_affinity_gflownet_sft_4090.yaml`, and `config/train/biomed_annotations_affinity_structure_dynamics_gflownet_4090.yaml`. The coordinate and internal-coordinate heads are model-stage overrides: they are enabled during the TokenGT SFT/model-training phase, where the model can actually emit coordinate readouts and receive UMA force feedback. The standalone SFT-GFlowNet and structure-dynamics GFlowNet phases train token-set construction policies over symbolic/contact/internal-coordinate/all-atom Cartesian candidate vocabularies. The full local source set is 2,411,356 data rows: 574,627 UniProt feature rows plus 1,836,729 biomolecular complex-affinity rows. Add `INCLUDE_ORIGINAL_FULL_SELECTED=1` to include the original 7,328,008-row selected public corpus in the same curated training dataset.
 
 If `data/local/uniprot_features.tsv` and `data/local/complex_affinity.tsv` already exist and you only want to rebuild graphification/curation before training:
 
@@ -823,7 +823,43 @@ conda run --no-capture-output -n tokengt python scripts/repair_jsonl_concatenati
 
 After repair, rerun `scripts/check_dataset_integrity.py`; it reads curated `split_sizes` as well as full-corpus `counts`. Full SFT is one full epoch over the curated corpus, about 60k optimizer steps for biomed-only or about 240k optimizer steps for combined-original mode with the default effective batch of 36, followed by the two 3k-step GFlowNet phases.
 
-The oracle-dynamics 250M wrapper above defaults to `FULL_TRAIN_BATCH_SIZE=1`, `FULL_TRAIN_GRAD_ACCUM=36`, `ENABLE_TROPICAL_ATTENTION=1`, `ENABLE_UMA_COORDINATE_HEAD=1`, and `EXTRA_TRAIN_CONFIGS+=config/train/overrides/uma_contact_geometry_loss.yaml`. It is intentionally conservative for a 24GB RTX 4090. After a stable run, try:
+The oracle-dynamics 250M wrapper above defaults to `FULL_TRAIN_BATCH_SIZE=1`, `FULL_TRAIN_GRAD_ACCUM=36`, `ENABLE_TROPICAL_ATTENTION=1`, `ENABLE_UMA_COORDINATE_HEAD=1`, and `EXTRA_TRAIN_CONFIGS+=config/train/overrides/uma_contact_geometry_loss.yaml`. It is intentionally conservative for a 24GB RTX 4090. This default coordinate-head path exposes short UMA coordinate-query windows and is the practical training default.
+
+For full-size all-atom Cartesian structure-dynamics model training, use the long 8192-token BioSELFIES/coordinate override. This keeps supervised coordinate labels off, enables the coordinate and internal-coordinate heads for the model-training phase, exposes up to 8192 all-atom coordinate-query slots, and scores a tractable oracle subset per feedback call:
+
+```bash
+ENABLE_LONG_ALL_ATOM_CARTESIAN_HEAD=1 \
+FULL_TRAIN_BATCH_SIZE=1 \
+FULL_TRAIN_EVAL_BATCH_SIZE=1 \
+FULL_TRAIN_GRAD_ACCUM=36 \
+./scripts/train_full_selected_250m_oracle_dynamics_direct.sh
+```
+
+If the 250M model is too large at 8192 context on the local 4090, use the smaller long-context config without changing the data path:
+
+```bash
+ENABLE_LONG_ALL_ATOM_CARTESIAN_HEAD=1 \
+MODEL_CONFIG=config/model/ugm_120m_tokengt_8192_selfies.yaml \
+FULL_TRAIN_BATCH_SIZE=1 \
+FULL_TRAIN_EVAL_BATCH_SIZE=1 \
+FULL_TRAIN_GRAD_ACCUM=36 \
+./scripts/train_full_selected_250m_oracle_dynamics_direct.sh
+```
+
+The same long all-atom override is available for the UniProt/affinity direct wrapper:
+
+```bash
+ENABLE_LONG_ALL_ATOM_CARTESIAN_HEAD=1 \
+PREPARE_FULL_BIOMED_SOURCES=0 \
+PREPARE_UNIPROT=0 \
+PREPARE_AFFINITY=0 \
+CURATE_DATA=0 \
+INCLUDE_ORIGINAL_FULL_SELECTED=1 \
+TRAIN_PHASES=sft \
+./scripts/run_full_biomed_annotations_affinity_training.sh
+```
+
+After a stable standard run, try:
 
 ```bash
 FULL_TRAIN_BATCH_SIZE=2 FULL_TRAIN_EVAL_BATCH_SIZE=2 FULL_TRAIN_GRAD_ACCUM=18 \
@@ -1194,6 +1230,64 @@ Current smoke coverage:
 - UniProt feature/binding-site graphification, biomolecular-complex affinity graphification, internal-coordinate UMA action slots, UMA internal-coordinate oracle proxy loss, BioSELFIES conversion for biomed rows, all-atom Cartesian structure-dynamics candidate tokens, and legacy-corpus fallback derivation for structure-dynamics GFlowNet candidates.
 - readiness probe for optional packages, Lean, CUDA, and reference data.
 
+## Contact-Prior And OMG/gLM2 Preparation
+
+Structure-dynamics training can now add two sequence-only contact-prior families before curation. These are still strict symbolic inputs: they add predicted contact records and candidate tokens, not coordinate labels.
+
+ESM-style protein contact priors follow the public ESM notebook pattern: load an ESM2 model, run `model.predict_contacts(batch_tokens)`, cache the contact matrix, and graphify top residue-pair priors. Precompute and augment an existing protein JSONL like this:
+
+```bash
+conda run -n tokengt python scripts/build_esm_contact_priors.py \
+  --input data/processed/uniprot_features_local_export/all.jsonl \
+  --output data/processed/uniprot_features_local_export/all.esm_contacts.jsonl \
+  --model esm2_t33_650M_UR50D \
+  --device cuda \
+  --top-k 256 \
+  --min-probability 0.2 \
+  --min-separation 6
+```
+
+For inference, enable the same contact prior directly from `scripts/infer.py`:
+
+```bash
+conda run -n tokengt python scripts/infer.py \
+  --config config/inference/biomed_annotations_affinity_plus_original_250m_inference.yaml \
+  --output-modality structure_dynamics \
+  --task structure_dynamics_proxy \
+  --protein-sequence "MKTWYV" \
+  --temperature-k 325 \
+  --esm-contact-prior \
+  --esm-contact-device cuda \
+  --trajectory-frames 32 \
+  --trajectory-max-atoms 512 \
+  --structure-output-prefix outputs/inference/structure_dynamics/esm_contact_example \
+  --device cuda \
+  --output outputs/inference/structure_dynamics/esm_contact_example.json
+```
+
+OMG/gLM2-style mixed metagenomic context preparation is available through a diverse subsampler. It keeps CDS amino-acid segments, intergenic nucleotide segments, strand/order metadata, and optional categorical-Jacobian contact records. Use local OMG JSONL when available, or stream a bounded scan from Hugging Face:
+
+```bash
+conda run -n tokengt python scripts/prepare_omg_subsample.py \
+  --target-rows 20000 \
+  --scan-limit 500000 \
+  --require-intergenic \
+  --output data/processed/omg_diverse_intergenic/raw.jsonl \
+  --graph-output data/processed/omg_diverse_intergenic/all.jsonl
+```
+
+Cached categorical-Jacobian contact matrices or contact lists can be converted into graph rows:
+
+```bash
+conda run -n tokengt python scripts/build_categorical_jacobian_contacts.py \
+  --input data/local/glm2_jacobian/example_contacts.json \
+  --output data/processed/glm2_jacobian_contacts/example_contacts.json \
+  --top-k 512 \
+  --min-score 0.05
+```
+
+Protein-protein contact training should include affinity data when available. `graphify_biomolecular_complex_affinity` converts `Kd`, `Ki`, `IC50`, `kon`, `koff`, and `dG` fields into `AFFINITY_CONTACT:*`, `PPI_CONTACT:*`, and `CONTACT_PATCH:affinity_weighted_interface` tokens so the structure-dynamics GFlowNet can prioritize contact paths that are consistent with measured complex strength.
+
 ## Current Structure-Dynamics Restart Command
 
 The completed SFT and SFT-GFlowNet phases under run `20260503T204341Z` do not need to be repeated. The structure-dynamics GFlowNet failure happened before training, during candidate construction, so the restart command is the failed phase only:
@@ -1218,6 +1312,7 @@ conda run --no-capture-output -n tokengt python scripts/train_stage.py \
 - `planning/BIOMOLECULAR-ORACLE-DYNAMICS-PLAN.md`: implementation map for the BioSELFIES, sequence-only, UMA coordinate-force, contact-map, and GFlowNet approach in the addendum.
 - `planning/ORACLE-DYNAMICS-TRAINING-RUNBOOK.md`: concrete commands, config stack, W&B metrics, and function-readiness checklist for the addendum training path.
 - `planning/MULTIMODAL-BIO-LM-DATASET-UTILIZATION-PLAN.md`: LucaOne, ProTrek, BioT5+, OneProt, UniProt feature, and biomolecular-complex affinity data utilization plan.
+- `planning/OMG-GLM2-ESM-CONTACT-INTEGRATION.md`: ESM contact-prior, OMG/gLM2 intergenic-context, categorical-Jacobian, affinity-contact, and 8192 BioSELFIES integration notes.
 - `planning/TROPICAL-ATTENTION-INTEGRATION-PLAN.md`: source audit, mathematical contract, config toggles, hyperparameter guidance, metrics, risks, and validation criteria for optional MHTA training.
 - `planning/UGM-SYNTHETIC-FAUX-CODE-AUDIT.md`: first-party synthetic/proxy/faux-path inventory and replacement plan.
 - `planning/FULL-PRETRAINING-DATASET.md`: complete selected public pretraining corpus, token counts, per-dataset totals, and completeness boundary.
@@ -1236,6 +1331,8 @@ conda run --no-capture-output -n tokengt python scripts/train_stage.py \
 - `src/iska_reasoner/topology/`: graph topology and distogram-style summaries.
 - `src/iska_reasoner/tropical/`: annealing, logit selection diagnostics, masked MHTA, and tropical transformer encoder utilities.
 - `src/iska_reasoner/oracles/`: live external oracle adapters, including FairChem/UMA.
+- `src/iska_reasoner/inference/contact_priors.py`: optional ESM contact-prior inference/cache helpers.
+- `src/iska_reasoner/inference/categorical_jacobian.py`: categorical-Jacobian contact helper utilities.
 - `scripts/prepare_science_sources.py`: local PubChem/UniProt/RefSeq/Materials/ChEMBL/BindingDB/PDBbind/EC preparation.
 - `scripts/prepare_multimodal_sources.py`: local/synthetic UGM multimodal graph-record preparation.
 - `scripts/audit_dataset_capacity.py`: manifest size and local capacity audit.
@@ -1244,6 +1341,9 @@ conda run --no-capture-output -n tokengt python scripts/train_stage.py \
 - `scripts/build_multimodal_vocab.py`: UGM multimodal reference-token writer.
 - `scripts/check_uma_oracle.py`: FairChem/UMA clone/import/scoring readiness check.
 - `scripts/download_uma_weights.py`: FairChem/UMA gated checkpoint and reference-table download/verification.
+- `scripts/build_esm_contact_priors.py`: ESM2 contact-prior cache/JSONL augmentation for structure-dynamics graph rows.
+- `scripts/prepare_omg_subsample.py`: diverse OMG/gLM2-style CDS/intergenic mixed-modality subsampling and graphification.
+- `scripts/build_categorical_jacobian_contacts.py`: categorical-Jacobian contact-list/matrix conversion for graph contact priors.
 - `scripts/build_motif_vocab.py`: standalone sequence, structure, and structure-derived sequence motif vocabulary builder.
 - `scripts/quality_assess.py`: repeatable UGM ready-to-roll assessment.
 - `src/iska_reasoner/data/multimodal.py`: multimodal graphifier, vocabulary families, and PDB renderer.

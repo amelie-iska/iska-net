@@ -6,9 +6,17 @@ inference:
   sample: false
   temperature: 1.0
   device: cuda
+  esm_contact_prior:
+    enabled: false
+    model: esm2_t33_650M_UR50D
+    cache_dir: data/processed/esm_contact_priors/cache
+    top_k: 256
+    min_probability: 0.2
+    min_separation: 6
+    strict: false
   structure_dynamics:
     frames: 64
-    max_atoms: 5000
+    max_atoms: 12000
     max_residues: 500
     full_size_export: true
     score_target_frames: 64

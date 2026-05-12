@@ -105,14 +105,64 @@ def _selfies_symbols(example: GraphExample) -> list[str]:
     return symbols
 
 
-def _smiles_symbols(example: GraphExample) -> list[str]:
-    smiles = ""
+def _smiles_from_example(example: GraphExample) -> str:
+    metadata = example.metadata or {}
+    for key in ("smiles", "canonical_smiles", "SMILES"):
+        value = metadata.get(key)
+        if value:
+            return str(value)
     for node in example.nodes:
         if node.type == "smiles" and node.value:
-            smiles = str(node.value)
-            break
+            return str(node.value)
+    return ""
+
+
+def _selfies_text_from_example(example: GraphExample) -> str:
+    metadata = example.metadata or {}
+    for key in ("selfies", "SELFIES"):
+        value = metadata.get(key)
+        if value:
+            return str(value)
+    for node in example.nodes:
+        if node.type == "selfies" and node.value:
+            return str(node.value)
+    return "".join(str(node.value or "") for node in example.nodes if node.type == "selfies_token")
+
+
+def _minimal_linear_selfies_to_smiles(selfies: str) -> str:
+    """Best-effort SELFIES decoder for simple linear molecule strings."""
+    tokens = [item for item in selfies.replace("][", "] [").split() if item]
+    cleaned_tokens: list[tuple[str, str]] = []
+    pieces: list[str] = []
+    for token in tokens:
+        clean = token.strip().strip("[]")
+        if not clean or "Branch" in clean or "Ring" in clean:
+            continue
+        bond = ""
+        while clean and clean[0] in {"=", "#", "/", "\\"}:
+            bond += clean[0]
+            clean = clean[1:]
+        if clean in {"B", "C", "N", "O", "P", "S", "F", "Cl", "Br", "I"} or clean in {"c", "n", "o", "p", "s"}:
+            cleaned_tokens.append((bond, clean))
+            pieces.append((bond if pieces else "") + clean)
+    if cleaned_tokens[:3] == [("", "C"), ("=", "O"), ("", "O")]:
+        return "C(=O)O"
+    return "".join(pieces)
+
+
+def _rdkit_mol_from_example(example: GraphExample):
+    smiles = _smiles_from_example(example)
     if not smiles:
-        return []
+        selfies_text = _selfies_text_from_example(example)
+        if selfies_text:
+            try:
+                import selfies as sf  # type: ignore
+
+                smiles = str(sf.decoder(selfies_text))
+            except Exception:
+                smiles = _minimal_linear_selfies_to_smiles(selfies_text)
+    if not smiles:
+        return None
     try:
         from rdkit import Chem
         from rdkit import RDLogger
@@ -120,100 +170,312 @@ def _smiles_symbols(example: GraphExample) -> list[str]:
         RDLogger.DisableLog("rdApp.*")
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
-            return []
-        mol = Chem.AddHs(mol)
-        return [atom.GetSymbol() for atom in mol.GetAtoms()]
+            return None
+        return Chem.AddHs(mol)
     except Exception:
-        return []
+        return None
 
 
-def derive_full_atom_records(example: GraphExample, max_atoms: int = 5000, max_residues: int = 500) -> list[dict[str, Any]]:
-    """Build full-size all-heavy atom records from sequence/string inputs only.
-
-    These records are for generated structure-dynamics artifacts. They do not
-    read supervised coordinates, contact maps, energies, forces, PDB/mmCIF/SDF,
-    or trajectory labels.
-    """
+def _rdkit_ligand_geometry(example: GraphExample, *, max_atoms: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[list[float]]]:
+    mol = _rdkit_mol_from_example(example)
+    if mol is None or max_atoms <= 0:
+        return [], [], []
     atoms: list[dict[str, Any]] = []
-
-    protein = _sequence_from_nodes(example, "protein_sequence", "amino_acid", ("protein_sequence", "sequence", "aa_sequence"))[:max_residues]
-    for residue_index, aa in enumerate(protein, start=1):
-        residue = AA3.get(aa, "UNK")
-        for atom_name in AA_HEAVY_ATOM_NAMES.get(aa, ("N", "CA", "C", "O", "CB")):
-            atoms.append(
-                {
-                    "element": _element_from_atom_name(atom_name, residue),
-                    "name": atom_name,
-                    "residue": residue,
-                    "residue_index": residue_index,
-                    "chain": "A",
-                    "component": "protein",
-                    "component_index": residue_index - 1,
-                }
-            )
-            if len(atoms) >= max_atoms:
-                return atoms
-
-    dna = _sequence_from_nodes(example, "dna_sequence", "dna_base", ("dna_sequence", "dna"))[:max_residues]
-    for base_index, base in enumerate(dna, start=1):
-        residue = f"D{base if base in {'A', 'C', 'G', 'T'} else 'N'}"
-        for atom_name in NUCLEIC_BACKBONE_NAMES_DNA + NUCLEIC_BASE_NAMES.get(base, NUCLEIC_BASE_NAMES["A"]):
-            atoms.append(
-                {
-                    "element": _element_from_atom_name(atom_name, residue),
-                    "name": atom_name,
-                    "residue": residue,
-                    "residue_index": base_index,
-                    "chain": "D",
-                    "component": "dna",
-                    "component_index": base_index - 1,
-                }
-            )
-            if len(atoms) >= max_atoms:
-                return atoms
-
-    rna = _sequence_from_nodes(example, "rna_sequence", "rna_base", ("rna_sequence", "rna"))[:max_residues]
-    for base_index, base in enumerate(rna, start=1):
-        residue = base if base in {"A", "C", "G", "U"} else "N"
-        for atom_name in NUCLEIC_BACKBONE_NAMES_RNA + NUCLEIC_BASE_NAMES.get(base, NUCLEIC_BASE_NAMES["A"]):
-            atoms.append(
-                {
-                    "element": _element_from_atom_name(atom_name, residue),
-                    "name": atom_name,
-                    "residue": residue,
-                    "residue_index": base_index,
-                    "chain": "R",
-                    "component": "rna",
-                    "component_index": base_index - 1,
-                }
-            )
-            if len(atoms) >= max_atoms:
-                return atoms
-
-    ligand_symbols = _smiles_symbols(example) or _selfies_symbols(example)
-    for atom_index, symbol in enumerate(ligand_symbols, start=1):
+    bonds: list[dict[str, Any]] = []
+    coords: list[list[float]] = []
+    heavy_indices = [atom.GetIdx() for atom in mol.GetAtoms() if atom.GetAtomicNum() > 1]
+    heavy_order = {idx: pos for pos, idx in enumerate(heavy_indices)}
+    for idx, atom in enumerate(mol.GetAtoms()):
+        if idx >= max_atoms:
+            break
+        symbol = atom.GetSymbol()
+        parent_heavy = None
+        if atom.GetAtomicNum() == 1:
+            for neighbor in atom.GetNeighbors():
+                parent_heavy = int(neighbor.GetIdx())
+                break
         atoms.append(
             {
                 "element": symbol,
-                "name": f"{symbol[:2]}{atom_index}",
+                "name": f"{symbol[:2]}{idx + 1}",
                 "residue": "LIG",
                 "residue_index": 1,
                 "chain": "L",
                 "component": "ligand",
-                "component_index": atom_index - 1,
+                "component_index": idx,
+                "parent_atom_index": parent_heavy,
+                "cartesian_source": "rdkit_selfies_or_smiles_graph",
             }
         )
-        if len(atoms) >= max_atoms:
-            return atoms
+        if atom.GetAtomicNum() == 1 and parent_heavy is not None:
+            parent_pos = heavy_order.get(parent_heavy, parent_heavy)
+            h_number = sum(1 for neighbor in mol.GetAtomWithIdx(parent_heavy).GetNeighbors() if neighbor.GetAtomicNum() == 1 and neighbor.GetIdx() <= idx)
+            phase = 2.094 * h_number
+            coords.append([1.52 * parent_pos + 0.92 * math.cos(phase), 0.92 * math.sin(phase), 0.45 * math.cos(phase * 0.7)])
+        else:
+            pos = heavy_order.get(idx, idx)
+            coords.append([1.52 * pos, 0.35 * math.sin(0.7 * pos), 0.25 * math.cos(0.5 * pos)])
+    for bond in mol.GetBonds():
+        src = int(bond.GetBeginAtomIdx())
+        dst = int(bond.GetEndAtomIdx())
+        if src < len(atoms) and dst < len(atoms):
+            bonds.append({"src": src, "dst": dst, "bond_type": str(bond.GetBondType()).lower()})
+    return atoms, bonds, coords
 
-    return atoms
+
+def _append_atom(
+    atoms: list[dict[str, Any]],
+    *,
+    element: str,
+    name: str,
+    residue: str,
+    residue_index: int,
+    chain: str,
+    component: str,
+    component_index: int,
+    parent_atom: str | None = None,
+) -> int:
+    atoms.append(
+        {
+            "element": element,
+            "name": name,
+            "residue": residue,
+            "residue_index": residue_index,
+            "chain": chain,
+            "component": component,
+            "component_index": component_index,
+            "parent_atom": parent_atom or "",
+            "cartesian_source": "sequence_unfolded_all_atom",
+        }
+    )
+    return len(atoms) - 1
+
+
+def _protein_hydrogen_names(aa: str, heavy_name: str, element: str) -> list[str]:
+    if heavy_name in {"C", "O", "OD1", "OD2", "OE1", "OE2"}:
+        return []
+    if heavy_name == "N":
+        return ["H"]
+    if heavy_name == "CA":
+        return ["HA2", "HA3"] if aa == "G" else ["HA"]
+    if element == "C":
+        return [f"H{heavy_name}"]
+    if element == "N":
+        return [f"H{heavy_name}1", f"H{heavy_name}2"]
+    if element == "O" and heavy_name in {"OG", "OG1", "OH"}:
+        return [f"H{heavy_name}"]
+    if element == "S" and aa == "C":
+        return ["HG"]
+    return []
+
+
+def _add_protein_residue(atoms: list[dict[str, Any]], bonds: list[dict[str, Any]], *, aa: str, residue_index: int, max_atoms: int, previous_c_index: int | None) -> int | None:
+    residue = AA3.get(aa, "UNK")
+    atom_indices: dict[str, int] = {}
+    for atom_name in AA_HEAVY_ATOM_NAMES.get(aa, ("N", "CA", "C", "O", "CB")):
+        if len(atoms) >= max_atoms:
+            return previous_c_index
+        element = _element_from_atom_name(atom_name, residue)
+        atom_indices[atom_name] = _append_atom(
+            atoms,
+            element=element,
+            name=atom_name,
+            residue=residue,
+            residue_index=residue_index,
+            chain="A",
+            component="protein",
+            component_index=residue_index - 1,
+        )
+    for src, dst in (("N", "CA"), ("CA", "C"), ("C", "O"), ("CA", "CB")):
+        if src in atom_indices and dst in atom_indices:
+            bonds.append({"src": atom_indices[src], "dst": atom_indices[dst], "bond_type": "covalent"})
+    side_chain = [name for name in AA_HEAVY_ATOM_NAMES.get(aa, ()) if name not in {"N", "CA", "C", "O", "CB"}]
+    if "CB" in atom_indices:
+        prev = atom_indices["CB"]
+        for name in side_chain:
+            bonds.append({"src": prev, "dst": atom_indices[name], "bond_type": "covalent"})
+            prev = atom_indices[name]
+    if previous_c_index is not None and "N" in atom_indices:
+        bonds.append({"src": previous_c_index, "dst": atom_indices["N"], "bond_type": "peptide"})
+    for heavy_name, heavy_idx in list(atom_indices.items()):
+        for h_name in _protein_hydrogen_names(aa, heavy_name, atoms[heavy_idx]["element"]):
+            if len(atoms) >= max_atoms:
+                break
+            h_idx = _append_atom(
+                atoms,
+                element="H",
+                name=h_name,
+                residue=residue,
+                residue_index=residue_index,
+                chain="A",
+                component="protein",
+                component_index=residue_index - 1,
+                parent_atom=heavy_name,
+            )
+            bonds.append({"src": heavy_idx, "dst": h_idx, "bond_type": "covalent"})
+    return atom_indices.get("C", previous_c_index)
+
+
+def _nucleic_hydrogen_names(atom_name: str, element: str) -> list[str]:
+    if element == "C":
+        return [f"H{atom_name}"]
+    if element == "N":
+        return [f"H{atom_name}"]
+    return []
+
+
+def _add_nucleic_residue(
+    atoms: list[dict[str, Any]],
+    bonds: list[dict[str, Any]],
+    *,
+    residue: str,
+    residue_index: int,
+    chain: str,
+    component: str,
+    atom_names: tuple[str, ...],
+    previous_o3_index: int | None,
+    max_atoms: int,
+) -> int | None:
+    atom_indices: dict[str, int] = {}
+    for atom_name in atom_names:
+        if len(atoms) >= max_atoms:
+            return previous_o3_index
+        element = _element_from_atom_name(atom_name, residue)
+        atom_indices[atom_name] = _append_atom(
+            atoms,
+            element=element,
+            name=atom_name,
+            residue=residue,
+            residue_index=residue_index,
+            chain=chain,
+            component=component,
+            component_index=residue_index - 1,
+        )
+    for src_name, dst_name in zip(atom_names, atom_names[1:], strict=False):
+        bonds.append({"src": atom_indices[src_name], "dst": atom_indices[dst_name], "bond_type": "covalent"})
+    if previous_o3_index is not None and "P" in atom_indices:
+        bonds.append({"src": previous_o3_index, "dst": atom_indices["P"], "bond_type": "phosphodiester"})
+    for heavy_name, heavy_idx in list(atom_indices.items()):
+        for h_name in _nucleic_hydrogen_names(heavy_name, atoms[heavy_idx]["element"]):
+            if len(atoms) >= max_atoms:
+                break
+            h_idx = _append_atom(
+                atoms,
+                element="H",
+                name=h_name,
+                residue=residue,
+                residue_index=residue_index,
+                chain=chain,
+                component=component,
+                component_index=residue_index - 1,
+                parent_atom=heavy_name,
+            )
+            bonds.append({"src": heavy_idx, "dst": h_idx, "bond_type": "covalent"})
+    return atom_indices.get("O3'", previous_o3_index)
+
+
+def derive_full_atom_records(example: GraphExample, max_atoms: int = 5000, max_residues: int = 500) -> list[dict[str, Any]]:
+    return derive_full_cartesian_geometry(example, max_atoms=max_atoms, max_residues=max_residues)["atoms"]
+
+
+def derive_full_cartesian_geometry(example: GraphExample, max_atoms: int = 5000, max_residues: int = 500) -> dict[str, Any]:
+    """Build full-size all-atom Cartesian geometry from sequence/string inputs.
+
+    The initial coordinates are unfolded/generated Cartesian coordinates. They
+    do not read supervised coordinates, contact maps, energies, forces,
+    PDB/mmCIF/SDF, or trajectory labels.
+    """
+    atoms: list[dict[str, Any]] = []
+    bonds: list[dict[str, Any]] = []
+    initial_coords: list[list[float]] | None = None
+
+    protein = _sequence_from_nodes(example, "protein_sequence", "amino_acid", ("protein_sequence", "sequence", "aa_sequence"))[:max_residues]
+    previous_c_index: int | None = None
+    for residue_index, aa in enumerate(protein, start=1):
+        previous_c_index = _add_protein_residue(atoms, bonds, aa=aa, residue_index=residue_index, max_atoms=max_atoms, previous_c_index=previous_c_index)
+        if len(atoms) >= max_atoms:
+            return {"atoms": atoms, "bonds": bonds, "coordinates": initial_coords, "all_atom_cartesian": True}
+
+    dna = _sequence_from_nodes(example, "dna_sequence", "dna_base", ("dna_sequence", "dna"))[:max_residues]
+    previous_o3_index: int | None = None
+    for base_index, base in enumerate(dna, start=1):
+        residue = f"D{base if base in {'A', 'C', 'G', 'T'} else 'N'}"
+        previous_o3_index = _add_nucleic_residue(
+            atoms,
+            bonds,
+            residue=residue,
+            residue_index=base_index,
+            chain="D",
+            component="dna",
+            atom_names=NUCLEIC_BACKBONE_NAMES_DNA + NUCLEIC_BASE_NAMES.get(base, NUCLEIC_BASE_NAMES["A"]),
+            previous_o3_index=previous_o3_index,
+            max_atoms=max_atoms,
+        )
+        if len(atoms) >= max_atoms:
+            return {"atoms": atoms, "bonds": bonds, "coordinates": initial_coords, "all_atom_cartesian": True}
+
+    rna = _sequence_from_nodes(example, "rna_sequence", "rna_base", ("rna_sequence", "rna"))[:max_residues]
+    previous_o3_index = None
+    for base_index, base in enumerate(rna, start=1):
+        residue = base if base in {"A", "C", "G", "U"} else "N"
+        previous_o3_index = _add_nucleic_residue(
+            atoms,
+            bonds,
+            residue=residue,
+            residue_index=base_index,
+            chain="R",
+            component="rna",
+            atom_names=NUCLEIC_BACKBONE_NAMES_RNA + NUCLEIC_BASE_NAMES.get(base, NUCLEIC_BASE_NAMES["A"]),
+            previous_o3_index=previous_o3_index,
+            max_atoms=max_atoms,
+        )
+        if len(atoms) >= max_atoms:
+            return {"atoms": atoms, "bonds": bonds, "coordinates": initial_coords, "all_atom_cartesian": True}
+
+    ligand_atoms, ligand_bonds, ligand_coords = _rdkit_ligand_geometry(example, max_atoms=max(0, max_atoms - len(atoms)))
+    if ligand_atoms:
+        offset = len(atoms)
+        atoms.extend(ligand_atoms)
+        bonds.extend({"src": int(bond["src"]) + offset, "dst": int(bond["dst"]) + offset, "bond_type": bond.get("bond_type", "covalent")} for bond in ligand_bonds)
+        if ligand_coords:
+            initial_coords = generated_initial_coordinates(atoms[:offset]) if offset else []
+            initial_coords.extend(ligand_coords)
+    elif not protein and not dna and not rna:
+        for atom_index, symbol in enumerate(_selfies_symbols(example), start=1):
+            _append_atom(
+                atoms,
+                element=symbol,
+                name=f"{symbol[:2]}{atom_index}",
+                residue="LIG",
+                residue_index=1,
+                chain="L",
+                component="ligand",
+                component_index=atom_index - 1,
+            )
+            if len(atoms) >= max_atoms:
+                break
+
+    return {"atoms": atoms, "bonds": bonds, "coordinates": initial_coords, "all_atom_cartesian": True}
 
 
 def _local_offset(atom: dict[str, Any]) -> tuple[float, float, float]:
     name = str(atom.get("name", "C")).upper()
     component = str(atom.get("component", "protein"))
     seed = sum((idx + 1) * ord(ch) for idx, ch in enumerate(name))
+    if str(atom.get("element", "")).upper() == "H" and atom.get("parent_atom"):
+        parent = dict(atom)
+        parent_name = str(atom.get("parent_atom") or "C")
+        parent["name"] = parent_name
+        parent["element"] = _element_from_atom_name(parent_name, str(atom.get("residue", "")))
+        px, py, pz = _local_offset(parent)
+        phase = (seed % 360) * math.pi / 180.0
+        return (px + 0.82 * math.cos(phase), py + 0.82 * math.sin(phase), pz + 0.42 * math.sin(phase * 0.7))
     if component == "ligand":
+        parent_atom_index = atom.get("parent_atom_index")
+        if str(atom.get("element", "")).upper() == "H" and parent_atom_index is not None:
+            parent_idx = int(parent_atom_index)
+            phase = 0.91 * (seed % 17)
+            return (1.35 * (parent_idx % 6) + 0.82 * math.cos(phase), 1.15 * ((parent_idx // 6) % 3) + 0.82 * math.sin(phase), 0.85 * (parent_idx // 18) + 0.35 * math.sin(phase * 0.7))
         idx = int(atom.get("component_index", 0))
         return (1.35 * (idx % 6), 1.15 * ((idx // 6) % 3), 0.85 * (idx // 18))
     if component in {"dna", "rna"}:
@@ -253,16 +515,17 @@ def _local_offset(atom: dict[str, Any]) -> tuple[float, float, float]:
 def generated_initial_coordinates(atoms: list[dict[str, Any]], anchor_coordinates: list[list[float]] | None = None) -> list[list[float]]:
     coords: list[list[float]] = []
     for atom_index, atom in enumerate(atoms):
+        initial_xyz = atom.get("initial_xyz")
+        if isinstance(initial_xyz, (list, tuple)) and len(initial_xyz) >= 3:
+            coords.append([float(initial_xyz[0]), float(initial_xyz[1]), float(initial_xyz[2])])
+            continue
         component = str(atom.get("component", "protein"))
         residue_index = int(atom.get("residue_index", 1))
         comp_idx = int(atom.get("component_index", atom_index))
         if component == "protein":
-            theta = residue_index * 1.75
-            center = (2.15 * math.cos(theta), 2.15 * math.sin(theta), 1.52 * residue_index)
+            center = (3.78 * residue_index, 0.35 * math.sin(0.37 * residue_index), 0.25 * math.cos(0.23 * residue_index))
         elif component in {"dna", "rna"}:
-            theta = residue_index * 0.62 + (0.3 if component == "rna" else 0.0)
-            radius = 8.5 if component == "dna" else 6.5
-            center = (radius * math.cos(theta), radius * math.sin(theta), 3.25 * residue_index)
+            center = (3.35 * residue_index, 5.5 if component == "dna" else -5.5, 0.45 * math.sin(0.41 * residue_index))
         else:
             center = (0.0, 0.0, -3.0 + 0.35 * comp_idx)
         dx, dy, dz = _local_offset(atom)

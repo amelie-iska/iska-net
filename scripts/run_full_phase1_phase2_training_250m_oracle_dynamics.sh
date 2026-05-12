@@ -18,8 +18,18 @@ export FULL_TRAIN_SKIP_POLICY_CHECK="${FULL_TRAIN_SKIP_POLICY_CHECK:-0}"
 
 UMA_CONTACT_CONFIG="${UMA_CONTACT_CONFIG:-config/train/overrides/uma_contact_geometry_loss.yaml}"
 UMA_INTERNAL_CONFIG="${UMA_INTERNAL_CONFIG:-config/train/overrides/uma_internal_coordinates.yaml}"
+UMA_ALL_ATOM_CONFIG="${UMA_ALL_ATOM_CONFIG:-config/train/overrides/uma_all_atom_cartesian_head_8192.yaml}"
 ENABLE_UMA_CONTACT_GEOMETRY="${ENABLE_UMA_CONTACT_GEOMETRY:-1}"
-if [[ "$ENABLE_UMA_INTERNAL_COORDINATES" == "1" ]]; then
+ENABLE_LONG_ALL_ATOM_CARTESIAN_HEAD="${ENABLE_LONG_ALL_ATOM_CARTESIAN_HEAD:-0}"
+if [[ "$ENABLE_LONG_ALL_ATOM_CARTESIAN_HEAD" == "1" ]]; then
+  if [[ ! -f "$UMA_ALL_ATOM_CONFIG" ]]; then
+    printf 'UMA all-atom Cartesian config not found: %s\n' "$UMA_ALL_ATOM_CONFIG" >&2
+    exit 1
+  fi
+  export UMA_COORDINATE_HEAD_CONFIG="$UMA_ALL_ATOM_CONFIG"
+  export ENABLE_UMA_COORDINATE_HEAD=1
+fi
+if [[ "$ENABLE_UMA_INTERNAL_COORDINATES" == "1" && "$ENABLE_LONG_ALL_ATOM_CARTESIAN_HEAD" != "1" ]]; then
   if [[ ! -f "$UMA_INTERNAL_CONFIG" ]]; then
     printf 'UMA internal-coordinate config not found: %s\n' "$UMA_INTERNAL_CONFIG" >&2
     exit 1

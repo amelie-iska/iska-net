@@ -13,9 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from iska_reasoner.graph.schema import Edge, GraphExample, Node
 from iska_reasoner.data.multimodal import graphify_multimodal, records_to_multimodel_pdb, records_to_xyz_trajectory, write_mdtraj_trajectory
+from iska_reasoner.inference.contact_priors import predict_esm_contacts
 from iska_reasoner.inference.generate import complete_graph_tokens, load_model_for_inference, predict_uma_coordinate_frame
 from iska_reasoner.inference.structure_dynamics import (
-    derive_full_atom_records,
+    derive_full_cartesian_geometry,
     generated_initial_coordinates,
     high_quality_trajectory_score,
     smooth_trajectory_frames,
@@ -146,6 +147,33 @@ def _write_structure_outputs(
     return written
 
 
+def _maybe_add_esm_contact_priors(row: dict[str, Any] | None, args: argparse.Namespace, infer_cfg: dict[str, Any]) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    esm_cfg = infer_cfg.get("esm_contact_prior", {}) if isinstance(infer_cfg.get("esm_contact_prior"), dict) else {}
+    enabled = bool(args.esm_contact_prior or esm_cfg.get("enabled", False))
+    if not enabled:
+        return None
+    sequence = str(row.get("protein_sequence") or row.get("sequence") or row.get("aa_sequence") or "")
+    if not sequence:
+        return {"available": False, "message": "no protein_sequence for ESM contact prior"}
+    if row.get("esm_contacts") or row.get("contact_priors"):
+        return {"available": True, "message": "using contact priors already present on input row"}
+    result = predict_esm_contacts(
+        sequence,
+        model_name=str(args.esm_contact_model or esm_cfg.get("model", "esm2_t33_650M_UR50D")),
+        device=str(args.esm_contact_device or esm_cfg.get("device", args.device or infer_cfg.get("device", "cuda"))),
+        top_k=int(args.esm_contact_top_k or esm_cfg.get("top_k", 256)),
+        min_probability=float(args.esm_contact_min_probability if args.esm_contact_min_probability is not None else esm_cfg.get("min_probability", 0.2)),
+        min_separation=int(args.esm_contact_min_separation or esm_cfg.get("min_separation", 6)),
+        cache_dir=args.esm_contact_cache_dir or esm_cfg.get("cache_dir", "data/processed/esm_contact_priors/cache"),
+        strict=bool(args.esm_contact_strict or esm_cfg.get("strict", False)),
+    )
+    row["esm_contacts"] = result.contacts
+    row["esm_contact_prior_metadata"] = result.to_dict()
+    return result.to_dict()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run random-order graph token inference.")
     parser.add_argument("--config", action="append", help="YAML config path. Values are used as defaults.")
@@ -175,6 +203,14 @@ def main() -> None:
     parser.add_argument("--trajectory-force-step-size", type=float, default=None, help="UMA force rollout step size in Angstrom per eV/A proxy units.")
     parser.add_argument("--trajectory-oracle-backend", default=None, help="Coordinate rollout oracle backend: fairchem/uma or proxy.")
     parser.add_argument("--trajectory-strict-oracle", action="store_true", help="Fail if UMA/FairChem force rollout is unavailable.")
+    parser.add_argument("--esm-contact-prior", action="store_true", help="Compute/load an ESM-style protein contact prior before graphification and structure-dynamics export.")
+    parser.add_argument("--esm-contact-cache-dir", default=None, help="Directory for cached ESM contact-prior JSON files.")
+    parser.add_argument("--esm-contact-model", default=None, help="fair-esm pretrained function name, e.g. esm2_t33_650M_UR50D.")
+    parser.add_argument("--esm-contact-top-k", type=int, default=None)
+    parser.add_argument("--esm-contact-min-probability", type=float, default=None)
+    parser.add_argument("--esm-contact-min-separation", type=int, default=None)
+    parser.add_argument("--esm-contact-device", default=None)
+    parser.add_argument("--esm-contact-strict", action="store_true", help="Fail if ESM contact prediction cannot run.")
     parser.add_argument("--max-steps", type=int)
     parser.add_argument("--max-source-tokens", type=int)
     parser.add_argument("--sample", action="store_true")
@@ -198,15 +234,18 @@ def main() -> None:
     output_modality = args.output_modality or infer_cfg.get("output_modality")
     model, vocab, device = load_model_for_inference(checkpoint, vocab_path, device_name)
     multimodal_row = None
+    contact_prior_metadata = None
     if args.graph_json_file:
         example = GraphExample.from_dict(json.loads(Path(args.graph_json_file).read_text(encoding="utf-8")))
     elif args.graph_json:
         example = GraphExample.from_dict(json.loads(args.graph_json))
     elif args.multimodal_json_file:
         multimodal_row = json.loads(Path(args.multimodal_json_file).read_text(encoding="utf-8"))
+        contact_prior_metadata = _maybe_add_esm_contact_priors(multimodal_row, args, infer_cfg)
         example = graphify_multimodal(multimodal_row, 0, "inference_multimodal_graph_to_graph")
     elif args.multimodal_json:
         multimodal_row = json.loads(args.multimodal_json)
+        contact_prior_metadata = _maybe_add_esm_contact_priors(multimodal_row, args, infer_cfg)
         example = graphify_multimodal(multimodal_row, 0, "inference_multimodal_graph_to_graph")
     elif any([args.prompt, args.protein_sequence, args.selfies, args.smiles, args.dna_sequence, args.rna_sequence, args.temperature_k]):
         multimodal_row = {
@@ -219,6 +258,7 @@ def main() -> None:
             "rna_sequence": args.rna_sequence or "",
             "temperature": args.temperature_k,
         }
+        contact_prior_metadata = _maybe_add_esm_contact_priors(multimodal_row, args, infer_cfg)
         example = graphify_multimodal(multimodal_row, 0, "inference_multimodal_graph_to_graph")
     elif args.text:
         example = example_from_text(args.text)
@@ -236,6 +276,8 @@ def main() -> None:
             break
     verification = best_verification
     output = {"tokens": best_tokens, "verification": verification.metric_dict(prefix="")}
+    if contact_prior_metadata is not None:
+        output["esm_contact_prior"] = contact_prior_metadata
     if args.render_input_pdb and multimodal_row:
         atoms = multimodal_row.get("atoms") or []
         frames = multimodal_row.get("frames") or []
@@ -278,11 +320,14 @@ def main() -> None:
         atoms = prediction.get("atoms") or []
         coords = prediction.get("coordinates") or []
         symbols = prediction.get("symbols") or [str(atom.get("element", "C")) for atom in atoms]
-        full_atoms = derive_full_atom_records(example, max_atoms=max_atoms, max_residues=max_residues) if full_size else []
+        full_geometry = derive_full_cartesian_geometry(example, max_atoms=max_atoms, max_residues=max_residues) if full_size else {}
+        full_atoms = full_geometry.get("atoms", [])
+        full_bonds = full_geometry.get("bonds", [])
+        full_coords = full_geometry.get("coordinates")
         generated_full_size = bool(full_atoms)
         if generated_full_size:
             atoms = full_atoms
-            coords = generated_initial_coordinates(atoms, coords)
+            coords = full_coords or generated_initial_coordinates(atoms, coords)
             symbols = [str(atom.get("element", "C")) for atom in atoms]
         if not atoms or not coords:
             raise SystemExit("Structure-dynamics export requires a checkpoint with coordinate_head_enabled=true and nonempty UMA coordinate query slots.")
@@ -309,11 +354,13 @@ def main() -> None:
             target_frames=score_target_frames,
             expected_residues=max_residues if generated_full_size else None,
         )
-        written = _write_structure_outputs(prefix, atoms, frames, [], formats)
+        written = _write_structure_outputs(prefix, atoms, frames, full_bonds if generated_full_size else [], formats)
         output["structure_dynamics_export"] = {
             "files": written,
             "frames": len(frames),
             "atoms": len(atoms),
+            "bonds": len(full_bonds) if generated_full_size else 0,
+            "all_atom_cartesian": generated_full_size,
             "full_size_export": generated_full_size,
             "max_residues": max_residues,
             "trajectory_formats": formats,
