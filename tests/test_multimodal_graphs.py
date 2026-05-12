@@ -14,6 +14,8 @@ from iska_reasoner.data.multimodal import (
     graphify_multimodal,
     multimodal_reference_tokens,
     records_to_multimodel_pdb,
+    records_to_xyz_trajectory,
+    write_mdtraj_trajectory,
 )
 from iska_reasoner.data.phase_policy import ALLOW_STRUCTURE, graph_structure_violations
 from iska_reasoner.data.motifs import (
@@ -26,6 +28,7 @@ from iska_reasoner.data.motifs import (
 )
 from iska_reasoner.data.vocab import build_vocab
 from iska_reasoner.graph.orders import build_orders, oracle_enabling_order, scientific_graph_order
+from iska_reasoner.inference.generate import predict_uma_coordinate_frame
 from iska_reasoner.models.random_order_tokengt import RandomOrderTokenGT, RandomOrderTokenGTConfig
 from iska_reasoner.tools import multimodal_metrics_for_example, multimodal_oracle_reward, verify_example_tokens
 from iska_reasoner.training.uma_coordinate import uma_coordinate_head_oracle_loss, uma_internal_coordinate_head_oracle_loss
@@ -747,7 +750,7 @@ def test_multimodal_random_orders_include_scientific_and_oracle_priorities():
     assert oracle in orders
 
 
-def test_multimodal_pdb_renderer_and_oracle_reward(monkeypatch):
+def test_multimodal_pdb_renderer_and_oracle_reward(monkeypatch, tmp_path):
     monkeypatch.setenv("UGM_UMA_BACKEND", "proxy")
     atoms = [{"element": "C", "name": "C1"}, {"element": "O", "name": "O1"}]
     frames = [[[0.0, 0.0, 0.0], [1.25, 0.0, 0.0]]]
@@ -756,6 +759,14 @@ def test_multimodal_pdb_renderer_and_oracle_reward(monkeypatch):
     assert "ATOM" in pdb
     assert "CONECT" in pdb
     assert pdb.endswith("END\n")
+    xyz = records_to_xyz_trajectory(atoms, frames)
+    assert xyz.splitlines()[0] == "2"
+    assert "frame=0" in xyz
+
+    dcd_path = tmp_path / "ugm_test_structure_dynamics.dcd"
+    written = write_mdtraj_trajectory(dcd_path, atoms, frames, [{"src": 0, "dst": 1}])
+    assert written.exists()
+    assert written.stat().st_size > 0
 
     ex = graphify_multimodal(_row(), 0, "local_multimodal_graph_to_graph", molecular_input_policy=ALLOW_STRUCTURE)
     predicted = [
@@ -784,6 +795,46 @@ def test_multimodal_pdb_renderer_and_oracle_reward(monkeypatch):
     assert multimodal_oracle_reward(ex, predicted) >= 0.45
     result = verify_example_tokens(ex, predicted)
     assert result.reward > 0.5
+
+
+def test_predict_uma_coordinate_frame_for_structure_export():
+    ex = graphify_multimodal(
+        {
+            "task": "structure_dynamics_proxy",
+            "protein_sequence": "MKT",
+            "temperature": 325.0,
+            "oracle": {"name": "uma"},
+        },
+        19,
+        "local_multimodal_graph_to_graph",
+    )
+    vocab = build_vocab([ex], extra_tokens=multimodal_reference_tokens())
+    model = RandomOrderTokenGT(
+        RandomOrderTokenGTConfig(
+            vocab_size=len(vocab.token_to_id),
+            hidden_dim=32,
+            num_layers=1,
+            num_heads=4,
+            ffn_dim=64,
+            max_seq_len=192,
+            max_nodes=192,
+            max_slots=64,
+            coordinate_head_enabled=True,
+        )
+    )
+    pred = predict_uma_coordinate_frame(
+        model,
+        vocab,
+        ex,
+        torch.device("cpu"),
+        target_tokens=ex.target_tokens[:8],
+        max_source_tokens=96,
+        max_target_tokens=16,
+        max_uma_coordinate_atoms=6,
+    )
+    assert len(pred["atoms"]) == 6
+    assert len(pred["coordinates"]) == 6
+    assert all(len(coord) == 3 for coord in pred["coordinates"])
 
 
 def test_uma_proxy_reward_is_temperature_conditioned(monkeypatch):

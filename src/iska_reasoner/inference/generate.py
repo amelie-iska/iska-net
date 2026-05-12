@@ -160,3 +160,75 @@ def predict_coordinate_records(
             }
         )
     return results
+
+
+@torch.no_grad()
+def predict_uma_coordinate_frame(
+    model: RandomOrderTokenGT,
+    vocab: GraphVocab,
+    example: GraphExample,
+    device: torch.device,
+    target_tokens: list[str] | None = None,
+    max_source_tokens: int = 128,
+    max_target_tokens: int = 64,
+    max_uma_coordinate_atoms: int = 64,
+) -> dict[str, Any]:
+    """Predict one all-atom Cartesian frame from source-side UMA query slots.
+
+    The frame comes from the optional continuous coordinate head reading
+    `UMA_COORD_QUERY:*` source slots. These slots are derived from sequence,
+    BioSELFIES/SELFIES, SMILES, or atom symbols and do not require structure
+    labels in the input row.
+    """
+    if not bool(model.cfg.coordinate_head_enabled) or max_uma_coordinate_atoms <= 0:
+        return {"atoms": [], "coordinates": [], "symbols": []}
+    tokens = list(target_tokens if target_tokens is not None else example.target_tokens)
+    if not tokens:
+        tokens = ["<UNK>"]
+    tmp = GraphExample(
+        id=example.id,
+        task=example.task,
+        nodes=example.nodes,
+        edges=example.edges,
+        target_tokens=tokens,
+        metadata=example.metadata,
+        decoder_orders=[list(range(len(tokens)))],
+        coordinate_targets=example.coordinate_targets,
+    )
+    collator = RandomOrderCollator(
+        vocab=vocab,
+        max_source_tokens=max_source_tokens,
+        max_target_tokens=max_target_tokens,
+        max_seq_len=model.cfg.max_seq_len,
+        max_uma_coordinate_atoms=max_uma_coordinate_atoms,
+        order_mode="first",
+    )
+    batch = collator([tmp])
+    batch = {key: value.to(device) if torch.is_tensor(value) else value for key, value in batch.items()}
+    out = model(**{k: batch[k] for k in [
+        "input_ids",
+        "kind_ids",
+        "slot_ids",
+        "endpoint_ids",
+        "identifier_ids",
+        "source_numeric_features",
+        "attention_mask",
+        "causal_mask",
+    ]})
+    mean = out.get("coordinate_mean")
+    if mean is None:
+        return {"atoms": [], "coordinates": [], "symbols": []}
+    mask = batch["uma_coordinate_query_mask"][0].to(dtype=torch.bool)
+    indices = torch.where(mask)[0].tolist()
+    symbols = list((batch.get("uma_coordinate_symbols") or [[]])[0])[: len(indices)]
+    coords = mean[0, indices, :].detach().cpu().tolist()
+    atoms = [
+        {
+            "element": str(symbol or "C"),
+            "name": f"{str(symbol or 'C')[:2]}{idx + 1}",
+            "residue": "UGM",
+            "residue_index": 1,
+        }
+        for idx, symbol in enumerate(symbols)
+    ]
+    return {"atoms": atoms, "coordinates": [[float(v) for v in xyz[:3]] for xyz in coords], "symbols": symbols}

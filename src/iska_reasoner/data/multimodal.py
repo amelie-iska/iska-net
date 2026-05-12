@@ -1364,6 +1364,81 @@ def records_to_multimodel_pdb(atoms: list[dict[str, Any]], frames: list[list[lis
     return "\n".join(rows) + "\n"
 
 
+def records_to_xyz_trajectory(atoms: list[dict[str, Any]], frames: list[list[list[float]]], comment: str = "UGM generated structure-dynamics trajectory") -> str:
+    rows: list[str] = []
+    for frame_idx, coords in enumerate(frames):
+        rows.append(str(len(atoms)))
+        rows.append(f"{comment}; frame={frame_idx}")
+        for atom_idx, atom in enumerate(atoms):
+            element = _atom_element(atom).strip() or "X"
+            coord = coords[atom_idx] if atom_idx < len(coords) else [0.0, 0.0, 0.0]
+            x, y, z = [float(v) for v in coord[:3]]
+            rows.append(f"{element:2s} {x:12.6f} {y:12.6f} {z:12.6f}")
+    return "\n".join(rows) + "\n"
+
+
+def write_mdtraj_trajectory(
+    path: str | Path,
+    atoms: list[dict[str, Any]],
+    frames: list[list[list[float]]],
+    bonds: list[dict[str, Any]] | None = None,
+) -> Path:
+    """Write an MD-style trajectory through MDTraj.
+
+    PDB/XYZ rendering in this module uses Angstrom. MDTraj stores coordinates
+    in nanometers, so the frame tensor is scaled by 0.1 at the file boundary.
+    Supported suffixes depend on MDTraj, with `.dcd` and `.xtc` being the
+    primary MD trajectory targets used by the inference CLI.
+    """
+    import numpy as np
+    import mdtraj as md
+    from mdtraj.core import element as md_element
+
+    out = Path(path)
+    top = md.Topology()
+    chain = top.add_chain("A")
+    residue_lookup: dict[tuple[str, int], Any] = {}
+    md_atoms = []
+    for atom_idx, atom in enumerate(atoms):
+        residue_name = _as_str(atom.get("residue") if isinstance(atom, dict) else "MOL").strip()[:3] or "MOL"
+        residue_index = int(atom.get("residue_index", 1)) if isinstance(atom, dict) else 1
+        key = (residue_name, residue_index)
+        if key not in residue_lookup:
+            residue_lookup[key] = top.add_residue(residue_name, chain, resSeq=residue_index)
+        symbol = _atom_element(atom).strip() or "C"
+        try:
+            elem = md_element.get_by_symbol(symbol)
+        except Exception:
+            elem = md_element.carbon
+        name = _as_str(atom.get("name") if isinstance(atom, dict) else f"{symbol}{atom_idx + 1}").strip()[:4] or f"{symbol}{atom_idx + 1}"
+        md_atoms.append(top.add_atom(name, elem, residue_lookup[key]))
+    for bond in bonds or []:
+        try:
+            src = int(bond.get("src", bond.get("i", 0)))
+            dst = int(bond.get("dst", bond.get("j", 0)))
+        except Exception:
+            continue
+        if 0 <= src < len(md_atoms) and 0 <= dst < len(md_atoms):
+            top.add_bond(md_atoms[src], md_atoms[dst])
+    xyz_angstrom = np.asarray(frames, dtype=np.float32)
+    if xyz_angstrom.ndim != 3 or xyz_angstrom.shape[1] != len(atoms) or xyz_angstrom.shape[2] != 3:
+        raise ValueError(f"trajectory frame shape must be [frames, {len(atoms)}, 3], got {tuple(xyz_angstrom.shape)}")
+    traj = md.Trajectory(xyz=xyz_angstrom * 0.1, topology=top)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    suffix = out.suffix.lower()
+    if suffix == ".dcd":
+        traj.save_dcd(str(out))
+    elif suffix == ".xtc":
+        traj.save_xtc(str(out))
+    elif suffix == ".trr":
+        traj.save_trr(str(out))
+    elif suffix == ".nc":
+        traj.save_netcdf(str(out))
+    else:
+        raise ValueError(f"Unsupported MDTraj trajectory suffix: {suffix}")
+    return out
+
+
 def iter_synthetic_multimodal_examples(count: int = 16, seed: int = 17) -> Iterable[dict[str, Any]]:
     residues = "ACDEFGHIKLMNPQRSTVWY"
     selfies_samples = ["[C][O]", "[C][=O][O]", "[N][C][C][O]", "[C][C][Branch1][C][O]"]

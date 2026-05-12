@@ -1254,3 +1254,147 @@ conda run --no-capture-output -n tokengt python scripts/train_stage.py \
 - `src/iska_reasoner/tools/`: verifier adapters.
 - `src/iska_reasoner/data/curate.py`: dedup, split, and curation scoring.
 - `src/iska_reasoner/gflownet/`: trajectory-balance stage.
+
+## Inference Quick Reference
+
+All inference commands use `scripts/infer.py`. Pass either a config with `inference.checkpoint` and `inference.vocab`, or pass `--checkpoint` and `--vocab` directly. Use `--device cuda` for trained 4090 checkpoints and `--device cpu` only for tiny smoke checkpoints.
+
+Text or general graph reasoning:
+
+```bash
+conda run -n tokengt python scripts/infer.py \
+  --config config/inference/real_full_selected_250m_inference.yaml \
+  --text "Create a graph reasoning sketch for a protein ligand binding question." \
+  --max-steps 16 \
+  --device cuda \
+  --output outputs/inference/text_graph_reasoning.json
+```
+
+Raw graph JSON:
+
+```bash
+conda run -n tokengt python scripts/infer.py \
+  --config config/inference/real_full_selected_250m_inference.yaml \
+  --graph-json-file data/local/inference/example_graph.json \
+  --max-steps 32 \
+  --device cuda \
+  --output outputs/inference/graph_json_completion.json
+```
+
+Protein sequence and function-description modality:
+
+```bash
+conda run -n tokengt python scripts/infer.py \
+  --config config/inference/multimodal_4090_inference.yaml \
+  --task function_description \
+  --prompt "Generate graph records and a function hypothesis for this protein." \
+  --protein-sequence "MKTWYV" \
+  --temperature-k 315 \
+  --max-steps 32 \
+  --device cuda \
+  --output outputs/inference/protein_function.json
+```
+
+Small-molecule SELFIES or SMILES modality:
+
+```bash
+conda run -n tokengt python scripts/infer.py \
+  --config config/inference/multimodal_4090_inference.yaml \
+  --task molecule_reasoning \
+  --prompt "Generate graph records for this molecule." \
+  --selfies "[C][=O][O]" \
+  --smiles "CC(=O)O" \
+  --temperature-k 325 \
+  --max-steps 32 \
+  --device cuda \
+  --output outputs/inference/molecule_graph.json
+```
+
+DNA or RNA modality:
+
+```bash
+conda run -n tokengt python scripts/infer.py \
+  --config config/inference/multimodal_4090_inference.yaml \
+  --task sequence_annotation \
+  --prompt "Generate graph records for nucleic-acid sequence reasoning." \
+  --dna-sequence "ATGCGTAC" \
+  --rna-sequence "AUGCGUAC" \
+  --temperature-k 310 \
+  --max-steps 32 \
+  --device cuda \
+  --output outputs/inference/nucleic_acid_graph.json
+```
+
+Mixed multimodal row, including BioSELFIES input:
+
+```bash
+conda run -n tokengt python scripts/infer.py \
+  --config config/inference/multimodal_4090_inference.yaml \
+  --multimodal-json-file data/local/inference/mixed_bioselfies_row.json \
+  --max-steps 48 \
+  --device cuda \
+  --output outputs/inference/mixed_multimodal_graph.json
+```
+
+Structure-dynamics output modality:
+
+```bash
+conda run -n tokengt python scripts/infer.py \
+  --config config/inference/multimodal_4090_inference.yaml \
+  --output-modality structure_dynamics \
+  --task structure_dynamics_proxy \
+  --prompt "Generate UMA-scored all-atom Cartesian structure-dynamics records." \
+  --protein-sequence "MKTWYV" \
+  --selfies "[C][=O][O]" \
+  --temperature-k 325 \
+  --trajectory-frames 16 \
+  --trajectory-max-atoms 64 \
+  --trajectory-formats dcd,xyz \
+  --trajectory-oracle-backend fairchem \
+  --structure-output-prefix outputs/inference/structure_dynamics/example \
+  --max-steps 64 \
+  --device cuda \
+  --output outputs/inference/structure_dynamics/example.json
+```
+
+When `--output-modality structure_dynamics` is used, the CLI now writes:
+
+- `outputs/inference/structure_dynamics/example.pdb`: multi-model PDB with one `MODEL`/`ENDMDL` block per generated frame.
+- `outputs/inference/structure_dynamics/example.dcd`: MD-style trajectory written through MDTraj, suitable for tools that accept PDB topology plus DCD coordinates.
+- `outputs/inference/structure_dynamics/example.xyz`: portable text trajectory for quick inspection and fallback tooling.
+- `outputs/inference/structure_dynamics/example.json`: generated graph tokens, verifier metrics, and trajectory export metadata.
+
+Use strict FairChem/UMA behavior when you want missing UMA weights or force rollout failures to stop the run:
+
+```bash
+conda run -n tokengt python scripts/infer.py \
+  --config config/inference/multimodal_4090_inference.yaml \
+  --output-modality structure_dynamics \
+  --task structure_dynamics_proxy \
+  --protein-sequence "MKTWYV" \
+  --temperature-k 325 \
+  --trajectory-oracle-backend fairchem \
+  --trajectory-strict-oracle \
+  --structure-output-prefix outputs/inference/structure_dynamics/strict_uma_example \
+  --device cuda \
+  --output outputs/inference/structure_dynamics/strict_uma_example.json
+```
+
+For local smoke tests without gated UMA weights, use the deterministic proxy oracle explicitly:
+
+```bash
+conda run -n tokengt python scripts/infer.py \
+  --config config/inference/multimodal_tiny_inference.yaml \
+  --output-modality structure_dynamics \
+  --task structure_dynamics_proxy \
+  --protein-sequence "MKTW" \
+  --temperature-k 325 \
+  --trajectory-frames 4 \
+  --trajectory-formats dcd,xyz \
+  --trajectory-oracle-backend proxy \
+  --structure-output-prefix outputs/inference/structure_dynamics/proxy_smoke \
+  --device cpu \
+  --output outputs/inference/structure_dynamics/proxy_smoke.json
+```
+
+The structure-dynamics files are generated model/oracle artifacts. They are not supervised PDB/SDF/mmCIF/MD labels copied from training data.
