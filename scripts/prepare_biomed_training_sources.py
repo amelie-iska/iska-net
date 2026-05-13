@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import sys
 import tempfile
 import urllib.parse
@@ -63,13 +64,8 @@ def _next_link(headers: Any) -> str | None:
     link = headers.get("Link")
     if not link:
         return None
-    for part in link.split(","):
-        part = part.strip()
-        if 'rel="next"' not in part:
-            continue
-        if part.startswith("<") and ">" in part:
-            return part[1 : part.index(">")]
-    return None
+    match = re.search(r'<([^>]+)>;\s*rel="next"', link)
+    return match.group(1) if match else None
 
 
 def _download_uniprot_search_pages(

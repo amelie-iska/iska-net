@@ -61,6 +61,7 @@ def test_check_bio_scale_targets_warns_only_for_source_limited_dna(tmp_path: Pat
     }
     bio_summary = {
         "per_dataset": {
+            "uniprot_uniref50_sequence_train": 3_000_000,
             "pubchem10m_selfies_train": 3_000_000,
             "rfam_sequence_train": 1_500_000,
             "rnacentral_8192_sequence_train": 1_500_000,
@@ -68,6 +69,7 @@ def test_check_bio_scale_targets_warns_only_for_source_limited_dna(tmp_path: Pat
             "uniprot_function_text_train": 464_395,
         },
         "per_dataset_source_rows": {
+            "uniprot_uniref50_sequence_train": 60_315_044,
             "pubchem10m_selfies_train": 9_999_999,
             "rfam_sequence_train": 20_051_822,
             "rnacentral_8192_sequence_train": 7_340_032,

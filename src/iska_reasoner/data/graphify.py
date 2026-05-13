@@ -1070,12 +1070,14 @@ def graphify_nucleotide_sequence(row: dict[str, Any], idx: int, dataset_name: st
 def graphify_protein_ec(row: dict[str, Any], idx: int, dataset_name: str) -> GraphExample:
     sequence = str(row.get("protein_sequence") or row.get("sequence") or row.get("Sequence") or row.get("aa_sequence") or "")
     ec_number = str(row.get("ec_number") or row.get("EC") or row.get("ec") or row.get("EC number") or "")
-    organism = str(row.get("organism") or row.get("Organism") or row.get("taxon") or "")
+    organism = str(row.get("organism") or row.get("Organism") or row.get("taxon") or row.get("rep_organism") or row.get("common_taxon") or "")
     function_text = str(
         row.get("function_description")
         or row.get("function")
         or row.get("protein_description")
         or row.get("protein_name")
+        or row.get("rep_protein_name")
+        or row.get("name")
         or row.get("description")
         or row.get("annotation")
         or row.get("text")

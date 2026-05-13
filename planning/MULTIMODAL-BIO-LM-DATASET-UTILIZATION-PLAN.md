@@ -89,7 +89,7 @@ The bio-scale training target is now explicit:
 
 | Modality | Source path | Target |
 |---|---|---:|
-| Protein | UniProtKB REST feature stream plus UniProt function text | 3,000,000 protein feature rows, plus all available function-text rows |
+| Protein | UniRef50 representative sequences plus UniProt feature/function text | 3,000,000 UniRef50 protein sequence rows, plus reviewed UniProt feature rows and all available function-text rows |
 | Molecule | PubChem10M SELFIES | at least 3,000,000 SELFIES rows in the bio-scale run |
 | RNA | Rfam plus RNAcentral 8192 | at least 3,000,000 RNA rows combined; the runner currently requests up to 3M from each source |
 | DNA | DNA coding regions | requested at 3,000,000 rows, but the current public split is source-limited and is reported as such |

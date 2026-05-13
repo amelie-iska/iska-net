@@ -20,16 +20,17 @@ The expanded default additions are:
 | 2 | `graphwiz_graphinstruct_rft_72k_train` | Breadth over graph QA/instruction templates. | Include fully. |
 | 3 | `pubchem10m_selfies_train` | Molecule SELFIES sequence pretraining without structure-file inputs. | Manifest row cap: 8,000,000. |
 | 4 | `uniprot_function_text_train` | Protein sequence-to-function description grounding. | Include fully. |
-| 5 | `rfam_sequence_train` | RNA family sequence grounding. | Manifest row cap: 3,000,000 for the bio-scale run. |
-| 6 | `rnacentral_8192_sequence_train` | Broad RNA sequence diversity. | Manifest row cap: 3,000,000 for the bio-scale run. |
-| 7 | `dna_coding_regions_train` | DNA coding-region, exon/intron, and translated-protein annotations. | Manifest row cap requests 3,000,000, but the current public split is source-limited below that. |
-| 8 | `openmathreasoning_tir_train` | Tool-integrated math reasoning. | Manifest row cap: 1,300,000. |
-| 9 | `openmathreasoning_genselect_train` | Verifier-style solution selection. | Manifest row cap: 300,000. |
-| 10 | `dclm_baseline_1b_train` | Curated general-language quality/fluency. | Include fully unless the 5B guard fails. |
+| 5 | `uniprot_uniref50_sequence_train` | Million-row protein sequence coverage from UniRef50 representative sequences. | Manifest row cap: 3,000,000 and 7 parquet files for the bio-scale run. |
+| 6 | `rfam_sequence_train` | RNA family sequence grounding. | Manifest row cap: 3,000,000 for the bio-scale run. |
+| 7 | `rnacentral_8192_sequence_train` | Broad RNA sequence diversity. | Manifest row cap: 3,000,000 for the bio-scale run. |
+| 8 | `dna_coding_regions_train` | DNA coding-region, exon/intron, and translated-protein annotations. | Manifest row cap requests 3,000,000, but the current public split is source-limited below that. |
+| 9 | `openmathreasoning_tir_train` | Tool-integrated math reasoning. | Manifest row cap: 1,300,000. |
+| 10 | `openmathreasoning_genselect_train` | Verifier-style solution selection. | Manifest row cap: 300,000. |
+| 11 | `dclm_baseline_1b_train` | Curated general-language quality/fluency. | Include fully unless the 5B guard fails. |
 
 Dataset Viewer sample rows estimate the capped expanded default at roughly 4.9B untruncated graph-sequence tokens after adding the old 1.108B-token baseline. The hard `count_graph_tokens.py` guard remains authoritative.
 
-For the separate bio-scale all-atom contact run, `scripts/run_bio_scale_all_atom_contact_training.sh` adds a 3M-row UniProtKB REST protein feature stream plus public molecule/RNA/DNA sequence graphification before curation. It checks the resulting modality counts with `scripts/check_bio_scale_targets.py`; protein, molecule SELFIES, and RNA must meet the requested target, while DNA is allowed to be source-limited and is reported as such.
+For the separate bio-scale all-atom contact run, `scripts/run_bio_scale_all_atom_contact_training.sh` adds a 3M-row UniRef50 protein sequence slice plus public molecule/RNA/DNA sequence graphification before curation. It checks the resulting modality counts with `scripts/check_bio_scale_targets.py`; protein, molecule SELFIES, and RNA must meet the requested target, while DNA is allowed to be source-limited and is reported as such. A slower 3M-row UniProtKB REST feature stream remains available with `PREPARE_PROTEIN_SCALE_REST=1`, but the default protein scale source is UniRef50 parquet for throughput.
 
 The corpus still does not include manifest-only sources that require credentials, unavailable parquet export, or user-provided local exports:
 

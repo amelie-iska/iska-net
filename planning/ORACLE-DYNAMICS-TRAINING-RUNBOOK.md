@@ -59,7 +59,7 @@ TRAIN_PHASES=all \
 ./scripts/run_bio_scale_all_atom_contact_training.sh
 ```
 
-That wrapper downloads/graphifies PubChem10M SELFIES, UniProt function text, Rfam, RNAcentral 8192, and DNA coding-region rows, and separately streams 3M UniProtKB protein feature rows. `scripts/check_bio_scale_targets.py` gates the run: protein, molecule SELFIES, and RNA must meet the requested target unless the source itself is smaller; the current DNA source is explicitly recorded as source-limited. `scripts/build_bio_phase_subsets.py` then carves out the 25k static-structure/contact subset and the 2,500-row structure-dynamics subset used by the dedicated GFlowNet phase.
+That wrapper downloads/graphifies ConvergeBio UniRef50, PubChem10M SELFIES, UniProt function text, Rfam, RNAcentral 8192, and DNA coding-region rows. `scripts/check_bio_scale_targets.py` gates the run: protein, molecule SELFIES, and RNA must meet the requested target unless the source itself is smaller; the current DNA source is explicitly recorded as source-limited. `scripts/build_bio_phase_subsets.py` then carves out the 25k static-structure/contact subset and the 2,500-row structure-dynamics subset used by the dedicated GFlowNet phase. `PREPARE_PROTEIN_SCALE_REST=1` can switch on the slower UniProtKB REST protein-scale stream, but the default protein scale source is UniRef50 parquet.
 
 ## Manual Equivalent
 
@@ -109,7 +109,7 @@ The order matters: model/data/train base configs first, run-local batch/epoch ov
 | Complex affinity | `graphify_biomolecular_complex_affinity` | Adds protein/protein, protein/nucleic-acid, protein/ligand, and arbitrary component affinity rows | ready |
 | Training loop | `run_training_stage` | Combines token loss, UMA coordinate loss, contact loss, tqdm, JSONL metrics, checkpoints, W&B | ready |
 | Direct wrapper | `scripts/train_full_selected_250m_oracle_dynamics_direct.sh` | Jumps straight to phase-1 training with all oracle-dynamics overrides | ready |
-| Bio-scale wrapper | `scripts/run_bio_scale_all_atom_contact_training.sh` | Adds 3M-row protein/molecule/RNA sequence coverage where available, source-limited DNA reporting, 25k static-structure subset, and 2,500-row structure-dynamics subset before launching the all-atom contact training stack | ready |
+| Bio-scale wrapper | `scripts/run_bio_scale_all_atom_contact_training.sh` | Adds 3M-row UniRef50 protein, molecule, and RNA sequence coverage where available, source-limited DNA reporting, 25k static-structure subset, and 2,500-row structure-dynamics subset before launching the all-atom contact training stack | ready |
 | Bio-scale target check | `scripts/check_bio_scale_targets.py` | Fails if protein, molecule SELFIES, or RNA fall short unexpectedly; warns for source-limited DNA/protein-function-text rows | ready |
 | Phase subset builder | `scripts/build_bio_phase_subsets.py` | Builds separate static-structure/contact and structure-dynamics train/validation/test JSONL subsets from the curated corpus | ready |
 

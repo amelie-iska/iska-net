@@ -8,6 +8,7 @@ from typing import Any
 
 
 MODALITY_DATASETS = {
+    "protein": ("uniprot_uniref50_sequence_train",),
     "molecule": ("pubchem10m_selfies_train",),
     "rna": ("rfam_sequence_train", "rnacentral_8192_sequence_train"),
     "dna": ("dna_coding_regions_train",),
@@ -31,30 +32,28 @@ def _written_rows(summary: dict[str, Any], datasets: tuple[str, ...]) -> int:
 
 def check_targets(
     *,
-    protein_summary_path: Path,
+    protein_summary_path: Path | None,
     bio_sequence_summary_path: Path,
     target_rows: int,
     allow_source_limited: set[str],
 ) -> dict[str, Any]:
-    protein_summary = _read_json(protein_summary_path)
+    protein_summary = _read_json(protein_summary_path) if protein_summary_path and protein_summary_path.exists() else {}
     bio_summary = _read_json(bio_sequence_summary_path)
     protein_rows = int(
         ((protein_summary.get("sources") or {}).get("uniprot_features") or {}).get("rows") or 0
     )
 
-    modalities: dict[str, dict[str, Any]] = {
-        "protein": {
-            "datasets": ["UniProtKB REST feature stream"],
-            "source_rows": protein_rows,
-            "written_rows": protein_rows,
-        }
-    }
+    modalities: dict[str, dict[str, Any]] = {}
     for modality, datasets in MODALITY_DATASETS.items():
         modalities[modality] = {
             "datasets": list(datasets),
             "source_rows": _source_rows(bio_summary, datasets),
             "written_rows": _written_rows(bio_summary, datasets),
         }
+    if protein_rows:
+        modalities["protein"]["datasets"].append("UniProtKB REST feature stream")
+        modalities["protein"]["source_rows"] += protein_rows
+        modalities["protein"]["written_rows"] += protein_rows
 
     failures: list[str] = []
     warnings: list[str] = []
@@ -86,7 +85,7 @@ def check_targets(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Check bio-scale modality row targets after graphification.")
-    parser.add_argument("--protein-summary", required=True)
+    parser.add_argument("--protein-summary", default="")
     parser.add_argument("--bio-sequence-summary", required=True)
     parser.add_argument("--target-rows", type=int, default=3_000_000)
     parser.add_argument("--allow-source-limited", default="dna,protein_function_text")
@@ -99,7 +98,7 @@ def main() -> None:
         if item.strip()
     }
     summary = check_targets(
-        protein_summary_path=Path(args.protein_summary),
+        protein_summary_path=Path(args.protein_summary) if args.protein_summary else None,
         bio_sequence_summary_path=Path(args.bio_sequence_summary),
         target_rows=args.target_rows,
         allow_source_limited=allow_source_limited,

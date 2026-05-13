@@ -271,6 +271,18 @@ datasets:
     stage: protein_function_description
     full_training_quality_rank: 4
     notes: "Protein sequence plus grounded function text descriptions for sequence-to-function graph records."
+  - name: uniprot_uniref50_sequence_train
+    dataset_id: ConvergeBio/uniref50
+    config: default
+    split: train
+    method: hf_rows
+    license: cc-by-4.0
+    default_limit: 0
+    stage: protein_sequence_pretraining
+    full_training_quality_rank: 4
+    full_training_max_rows: 3000000
+    full_training_max_parquet_files: 7
+    notes: "UniRef50 representative protein sequences from UniProt, converted to Parquet. The bio-scale run uses this source for practical million-row protein sequence coverage; UniProt feature exports still provide binding-site/function annotations."
   - name: rfam_sequence_train
     dataset_id: multimolecule/rfam
     config: default

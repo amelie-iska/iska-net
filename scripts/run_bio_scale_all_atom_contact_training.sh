@@ -19,11 +19,13 @@ PROTEIN_SCALE_SUMMARY="${PROTEIN_SCALE_SUMMARY:-data/local/biomed_training_sourc
 BIO_SCALE_TARGET_SUMMARY="${BIO_SCALE_TARGET_SUMMARY:-data/processed/bio_sequence_scale_mix/bio_scale_target_summary.json}"
 BIO_SEQUENCE_MAX_DOWNLOAD_GIB="${BIO_SEQUENCE_MAX_DOWNLOAD_GIB:-64}"
 BIO_SCALE_ALLOW_SOURCE_LIMITED="${BIO_SCALE_ALLOW_SOURCE_LIMITED:-dna,protein_function_text}"
+PREPARE_PROTEIN_SCALE_REST="${PREPARE_PROTEIN_SCALE_REST:-0}"
 UNIPROT_SCALE_QUERY="${UNIPROT_SCALE_QUERY:-*}"
 UNIPROT_FEATURES_INPUTS="${UNIPROT_FEATURES_INPUTS:-data/local/uniprot_features.tsv}"
 AFFINITY_INPUTS="${AFFINITY_INPUTS:-data/local/complex_affinity.tsv}"
 
 BIO_SEQUENCE_DATASETS=(
+  uniprot_uniref50_sequence_train
   pubchem10m_selfies_train
   uniprot_function_text_train
   rfam_sequence_train
@@ -45,19 +47,21 @@ printf '[%s] Bio-scale all-atom-contact training\n' "$(date -u +"%Y-%m-%dT%H:%M:
 printf 'RUN_ID=%s protein_target=%s per_modality_target=%s structure_dynamics_target=%s static_structure_target=%s\n' \
   "$RUN_ID" "$PROTEIN_SEQUENCE_TARGET_ROWS" "$BIO_SEQUENCE_TARGET_ROWS_PER_MODALITY" "$STRUCTURE_DYNAMICS_TARGET_ROWS" "$STATIC_STRUCTURE_TARGET_ROWS"
 
-run conda run --no-capture-output -n "$CONDA_ENV" python scripts/prepare_biomed_training_sources.py \
-  --uniprot-output "$PROTEIN_SCALE_TSV" \
-  --skip-affinity \
-  --uniprot-query "$UNIPROT_SCALE_QUERY" \
-  --limit-uniprot "$PROTEIN_SEQUENCE_TARGET_ROWS" \
-  --min-uniprot-rows "$PROTEIN_SEQUENCE_TARGET_ROWS" \
-  --summary "$PROTEIN_SCALE_SUMMARY"
+if [[ "$PREPARE_PROTEIN_SCALE_REST" == "1" || "$PREPARE_PROTEIN_SCALE_REST" == "true" || "$PREPARE_PROTEIN_SCALE_REST" == "yes" ]]; then
+  run conda run --no-capture-output -n "$CONDA_ENV" python scripts/prepare_biomed_training_sources.py \
+    --uniprot-output "$PROTEIN_SCALE_TSV" \
+    --skip-affinity \
+    --uniprot-query "$UNIPROT_SCALE_QUERY" \
+    --limit-uniprot "$PROTEIN_SEQUENCE_TARGET_ROWS" \
+    --min-uniprot-rows "$PROTEIN_SEQUENCE_TARGET_ROWS" \
+    --summary "$PROTEIN_SCALE_SUMMARY"
 
-run conda run --no-capture-output -n "$CONDA_ENV" python scripts/prepare_science_sources.py \
-  --kind uniprot_features \
-  --dataset-name uniprot_features_scale \
-  --output "$PROTEIN_SCALE_GRAPH_JSONL" \
-  --input "$PROTEIN_SCALE_TSV"
+  run conda run --no-capture-output -n "$CONDA_ENV" python scripts/prepare_science_sources.py \
+    --kind uniprot_features \
+    --dataset-name uniprot_features_scale \
+    --output "$PROTEIN_SCALE_GRAPH_JSONL" \
+    --input "$PROTEIN_SCALE_TSV"
+fi
 
 for dataset in "${BIO_SEQUENCE_DATASETS[@]}"; do
   run conda run --no-capture-output -n "$CONDA_ENV" python scripts/download_hf_selected_splits.py \
@@ -94,8 +98,11 @@ run conda run --no-capture-output -n "$CONDA_ENV" python scripts/check_bio_scale
   --allow-source-limited "$BIO_SCALE_ALLOW_SOURCE_LIMITED" \
   --output "$BIO_SCALE_TARGET_SUMMARY"
 
-EXTRA_GRAPHS=(
-  "$PROTEIN_SCALE_GRAPH_JSONL"
+EXTRA_GRAPHS=()
+if [[ -s "$PROTEIN_SCALE_GRAPH_JSONL" ]]; then
+  EXTRA_GRAPHS+=("$PROTEIN_SCALE_GRAPH_JSONL")
+fi
+EXTRA_GRAPHS+=(
   "$BIO_SEQUENCE_PROCESSED_DIR/train.jsonl"
   "$BIO_SEQUENCE_PROCESSED_DIR/val.jsonl"
   "$BIO_SEQUENCE_PROCESSED_DIR/test.jsonl"
