@@ -46,13 +46,13 @@ The implemented path is intentionally practical for one RTX 4090: graph-rich exa
 - PLAN-E Hebrew morphology/root slices with UD Hebrew HTB, Hebrew QA, Nakdimon diacritization, root-template graphs, and root-extension GFlowNet training.
 - PLAN-F/PLAN-G deferred-component closure: optional advanced topology backends, tropical attention/parser utilities, autoregressive coordinate/property graph tokens plus a gated continuous coordinate head, audio feature extraction, local SFM/NatureLM and UniGenX science-source preparation, bioactivity/docking/protein graphification, safer verifier execution, stronger curation, and context-aware learned-backward GFlowNets.
 - PLAN-H UGM multimodal graph-to-graph phase: sequence-first vocabulary for text/protein/SELFIES/SMILES/DNA/RNA/tool/oracle records, local-source preparation, continuous temperature conditioning, UMA-conditioned coupling/motion bins, function-description alignment, and oracle-feedback GFlowNet rewards.
-- BioSELFIES-style symbolic graphification for the oracle-dynamics addendum: `bioselfies`, `bio_selfies`, or `input_representation: bioselfies` rows decode into typed protein/DNA/RNA/SELFIES/atom/link/modification/patch/H-bond/torsion/thought graph records. UniProt feature, bioactivity, and biomolecular-complex affinity rows now also receive a BioSELFIES view automatically, including ligand SELFIES where a ligand SMILES string is available. The decoder is total, so unsupported tokens become explicit `bioselfies_unknown` nodes rather than parser failures. This is a symbolic interface only; it does not introduce coordinates, distance labels, force labels, energy labels, PDB/mmCIF/SDF files, conformer libraries, or MD trajectories.
+- BioSELFIES-style symbolic graphification for the oracle-dynamics addendum: `bioselfies`, `bio_selfies`, or `input_representation: bioselfies` rows decode into typed protein/DNA/RNA/SELFIES/atom/link/modification/patch/H-bond/torsion/thought graph records. UniProt feature, bioactivity, and biomolecular-complex affinity rows now also receive a BioSELFIES view automatically, including ligand SELFIES where a ligand SMILES string is available. If the optional `selfies` package is absent, simple ligand SMILES still receive a conservative fallback SELFIES-style serialization such as `[C][C][O]`, so protein-ligand and protein-DNA-ligand affinity rows remain in the SELFIES/BioSELFIES path. The decoder is total, so unsupported tokens become explicit `bioselfies_unknown` nodes rather than parser failures. This is a symbolic interface only; it does not introduce coordinates, distance labels, force labels, energy labels, PDB/mmCIF/SDF files, conformer libraries, or MD trajectories.
 - All-atom Cartesian structure-dynamics candidate tokens for the strict oracle path: sequence/BioSELFIES rows can emit `ALL_ATOM_CARTESIAN:*`, `CARTESIAN_ATOM:protein:*`, `CARTESIAN_ATOM:nucleic_acid:*`, `CARTESIAN_ATOM:ligand:*`, and `CARTESIAN_FRAME:*` targets. These are output/action labels for model-generated coordinate proposals and UMA force scoring, not supervised coordinate labels.
 - All-atom contact-template source graphs for structure-dynamics rows: protein/DNA/RNA/SELFIES inputs now derive a sequence-initialized unfolded all-atom template with `all_atom_template_atom` nodes and `molecular_bond` edge tokens. Attention/contact maps are still TokenGT source-token maps; with this path enabled, those maps include atom tokens and covalent bond edge tokens under the configured `max_source_tokens` budget.
 - Internal-coordinate action slots for structure-dynamics training: symbolic protein/RNA/DNA/SELFIES rows can create `INTERNAL_COORD_QUERY:*` source slots, and the model emits torsion-like actions such as `protein_phi`, `protein_psi`, `protein_omega`, side-chain chi, nucleic-acid torsions, sugar pucker, and ligand torsion. These actions are trained through UMA-scored generated coarse geometries, not copied structure labels.
 - Separate GFlowNet tracks for SFT and structure-dynamics: `gflownet.mode: sft` learns diverse symbolic graph completions, while `gflownet.mode: structure_dynamics` filters candidates to BioSELFIES/all-atom Cartesian, internal-coordinate, contact-patch, adaptive-patch, temperature, token-motion, and UMA/oracle records. The structure-dynamics trainer can also derive those candidates from older curated biomed rows, so a failed GFlowNet phase can be restarted without re-running multi-hour curation when the SFT stages are already complete.
 - UniProt feature and binding-site graphification: local UniProt TSV/CSV/JSON/JSONL exports can add accessions, names, organism/taxon, GO, keywords, EC, domains, PTMs, variants, cofactors, catalytic activity, subcellular location, subunit text, binding sites, active sites, metal-binding sites, DNA-binding sites, and other sequence features.
-- Biomolecular-complex affinity graphification: local rows for protein-protein, protein-RNA, protein-DNA, protein-ligand, ligand-nucleic-acid, antibody-antigen, receptor-ligand, or arbitrary component complexes can carry `Kd`, `Ki`, `IC50`, `kon`, `koff`, or `dG`-style values with units, temperature, pH, buffer, and assay metadata.
+- Biomolecular-complex affinity graphification: local rows for protein-protein, protein-RNA, protein-DNA, protein-ligand, ligand-nucleic-acid, antibody-antigen, receptor-ligand, or arbitrary component complexes can carry `Kd`, `Ki`, `IC50`, `kon`, `koff`, or `dG`-style values with units, temperature, pH, buffer, and assay metadata. These rows emit `AFFINITY_CONTACT:*`, `COMPLEX_CONTACT:*`, `PPI_CONTACT:*`, and `CONTACT_PATCH:affinity_weighted_interface` records so PPI and multimodal biomolecular interaction data are trained through the same SFT and structure-dynamics GFlowNet path.
 - Full motif vocabulary path for sequence-first multimodal training: PROSITE, InterPro, Rfam, core sequence motifs, safe `SEQ_MOTIF_FROM_STRUCTURE:*` vocabulary entries, and optional non-structure molecule descriptors are parsed into graph-record vocabulary tokens; row-local structure motifs from coordinates/contact labels are evaluation/future-phase only.
 - Structure/dynamics sources are validation-only by default. Actual PDB/mmCIF/SDF/trajectory coordinate labels, energy labels, and force labels remain disabled. The active coordinate path uses model-generated coordinates scored by UMA as an online oracle.
 - Verifier-aware GFlowNet graph-of-thought trajectory-balance trainer plus rollout validation.
@@ -865,10 +865,14 @@ TRAIN_PHASES=sft \
 The all-atom contact-template graph changes both source tokens and structure-dynamics target/action tokens. For that reason, reuse of the previous `20260503T204341Z` SFT checkpoint is not safe without explicit embedding and output-head resizing/remapping. The retrain path should rebuild graphification and use a fresh vocab/output directory:
 
 ```bash
+RUN_ID=$(date -u +%Y%m%dT%H%M%SZ)-all-atom-contact
 ENABLE_LONG_ALL_ATOM_CARTESIAN_HEAD=1 \
 OUTPUT_DIR=outputs/biomed_annotations_affinity_plus_original_250m_all_atom_contact \
 VOCAB_PATH=outputs/biomed_annotations_affinity_plus_original_250m_all_atom_contact/vocab.jsonl \
 REUSE_VOCAB=false \
+TRAIN_BATCH_SIZE=1 \
+TRAIN_EVAL_BATCH_SIZE=1 \
+TRAIN_GRAD_ACCUM=36 \
 PREPARE_FULL_BIOMED_SOURCES=0 \
 PREPARE_UNIPROT=force \
 PREPARE_AFFINITY=force \
@@ -878,6 +882,34 @@ RESUME_CURATE=1 \
 INCLUDE_ORIGINAL_FULL_SELECTED=1 \
 TRAIN_PHASES=all \
 ./scripts/run_full_biomed_annotations_affinity_training.sh
+```
+
+The current machine does not have `tmux`, so the full run was launched with `nohup`:
+
+```bash
+mkdir -p logs/biomed_direct_training
+RUN_ID=20260513T003800Z-all-atom-contact
+nohup bash -lc '
+  set -euo pipefail
+  RUN_ID=20260513T003800Z-all-atom-contact \
+  ENABLE_LONG_ALL_ATOM_CARTESIAN_HEAD=1 \
+  OUTPUT_DIR=outputs/biomed_annotations_affinity_plus_original_250m_all_atom_contact \
+  VOCAB_PATH=outputs/biomed_annotations_affinity_plus_original_250m_all_atom_contact/vocab.jsonl \
+  REUSE_VOCAB=false \
+  TRAIN_BATCH_SIZE=1 \
+  TRAIN_EVAL_BATCH_SIZE=1 \
+  TRAIN_GRAD_ACCUM=36 \
+  PREPARE_FULL_BIOMED_SOURCES=0 \
+  PREPARE_UNIPROT=force \
+  PREPARE_AFFINITY=force \
+  CURATE_DATA=force \
+  FAST_CURATE=1 \
+  RESUME_CURATE=1 \
+  INCLUDE_ORIGINAL_FULL_SELECTED=1 \
+  TRAIN_PHASES=all \
+  ./scripts/run_full_biomed_annotations_affinity_training.sh
+' > logs/biomed_direct_training/20260513T003800Z-all-atom-contact.nohup.log 2>&1 &
+echo $! > logs/biomed_direct_training/20260513T003800Z-all-atom-contact.pid
 ```
 
 To skip the multi-hour curation when a newly graphified and integrity-checked all-atom-contact corpus already exists, set `PREPARE_UNIPROT=0 PREPARE_AFFINITY=0 CURATE_DATA=0` and keep `REUSE_VOCAB=false` for the first all-atom-contact training run.
@@ -1309,7 +1341,7 @@ conda run -n tokengt python scripts/build_categorical_jacobian_contacts.py \
   --min-score 0.05
 ```
 
-Protein-protein contact training should include affinity data when available. `graphify_biomolecular_complex_affinity` converts `Kd`, `Ki`, `IC50`, `kon`, `koff`, and `dG` fields into `AFFINITY_CONTACT:*`, `PPI_CONTACT:*`, and `CONTACT_PATCH:affinity_weighted_interface` tokens so the structure-dynamics GFlowNet can prioritize contact paths that are consistent with measured complex strength.
+Protein-protein contact training should include affinity data when available. `graphify_biomolecular_complex_affinity` converts `Kd`, `Ki`, `IC50`, `kon`, `koff`, and `dG` fields into `AFFINITY_CONTACT:*`, `PPI_CONTACT:*`, and `CONTACT_PATCH:affinity_weighted_interface` tokens so the structure-dynamics GFlowNet can prioritize contact paths that are consistent with measured complex strength. The same graphifier handles multimodal interactions such as protein-DNA-ligand rows: protein, nucleic-acid, and ligand components all receive component SELFIES/BioSELFIES views, all-atom contact-template nodes, and affinity-weighted `COMPLEX_CONTACT:*` candidates.
 
 ## Current Structure-Dynamics Restart Command
 
@@ -1355,6 +1387,43 @@ conda run --no-capture-output -n tokengt pytest -q
 ```
 
 Result: focused multimodal/GFlowNet tests passed, the tiny two-step training smoke completed, and the full test suite passed (`115 passed, 23 warnings`).
+
+Additional compatibility checks after adding multimodal affinity fallback SELFIES and all-atom trajectory export:
+
+```bash
+conda run --no-capture-output -n tokengt pytest -q tests/test_multimodal_graphs.py tests/test_gflownet_smoke.py
+
+conda run --no-capture-output -n tokengt python scripts/train_stage.py \
+  --config config/model/tiny_tokengt.yaml \
+  --config config/data/multimodal_graphs.yaml \
+  --config config/train/multimodal_phase2_tiny.yaml \
+  --config config/train/overrides/coordinate_head.yaml \
+  --config /tmp/iska_structure_export_smoke/train_override.yaml
+
+conda run --no-capture-output -n tokengt python scripts/infer.py \
+  --checkpoint /tmp/iska_structure_export_smoke/output/checkpoint_final.pt \
+  --vocab /tmp/iska_structure_export_smoke/output/vocab.jsonl \
+  --output-modality structure_dynamics \
+  --task structure_dynamics_proxy \
+  --prompt "Generate UMA-scored all-atom Cartesian structure-dynamics records." \
+  --protein-sequence "MKTWYV" \
+  --selfies "[C][=O][O]" \
+  --dna-sequence "ATGCGTAC" \
+  --temperature-k 325 \
+  --trajectory-frames 4 \
+  --trajectory-max-atoms 64 \
+  --trajectory-formats dcd,xyz \
+  --trajectory-oracle-backend proxy \
+  --structure-output-prefix /tmp/iska_structure_export_smoke/infer/example \
+  --max-steps 16 \
+  --max-source-tokens 512 \
+  --device cuda \
+  --output /tmp/iska_structure_export_smoke/infer/example.json
+
+conda run --no-capture-output -n tokengt pytest -q
+```
+
+Result: focused tests passed (`35 passed`); structure-dynamics inference wrote `.pdb`, `.dcd`, `.xyz`, and `.json`; the PDB contains `MODEL`, `ENDMDL`, `HELIX`, `CONECT`, and `REMARK 902 VIEWER REPRESENTATION: CARTOON RECOMMENDED`; the full test suite passed (`116 passed, 23 warnings`).
 
 ## Key Files
 

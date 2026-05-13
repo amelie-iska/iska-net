@@ -34,7 +34,7 @@ from iska_reasoner.data.motifs import (
 )
 from iska_reasoner.data.vocab import build_vocab
 from iska_reasoner.graph.orders import build_orders, oracle_enabling_order, scientific_graph_order
-from iska_reasoner.graph.schema import graph_source_tokens
+from iska_reasoner.graph.schema import GraphExample, graph_source_tokens
 from iska_reasoner.inference.generate import predict_uma_coordinate_frame
 from iska_reasoner.models.random_order_tokengt import RandomOrderTokenGT, RandomOrderTokenGTConfig
 from iska_reasoner.tools import multimodal_metrics_for_example, multimodal_oracle_reward, verify_example_tokens
@@ -390,6 +390,47 @@ def test_biomolecular_complex_affinity_rows_support_non_ligand_complexes():
     assert any(node["type"] == "ppi_affinity_contact_candidate" for node in graph_row["nodes"])
     assert any(edge["type"] == "molecular_bond" and edge.get("features", {}).get("all_atom_contact_template") for edge in graph_row["edges"])
     assert any(edge["type"] == "forms_complex_with" for edge in graph_row["edges"])
+
+
+def test_biomolecular_complex_affinity_rows_support_multimodal_affinity_contacts():
+    row = {
+        "protein_sequence": "MKTWYV",
+        "dna_sequence": "ATGCGTAC",
+        "ligand_smiles": "CCO",
+        "Ki": "4.2",
+        "units": "uM",
+        "interaction_type": "protein_dna_ligand",
+        "temperature": "298K",
+        "assay": "fluorescence anisotropy",
+    }
+    graph_row = next(graphify_rows([row], "biomolecular_complex_affinity_local"))
+    assert graph_row["task"] == "biomolecular_complex_affinity"
+    assert "BIOMED:complex_affinity" in graph_row["target_tokens"]
+    assert "COMPLEX:component:protein" in graph_row["target_tokens"]
+    assert "COMPLEX:component:dna" in graph_row["target_tokens"]
+    assert "COMPLEX:component:ligand" in graph_row["target_tokens"]
+    assert "COMPONENT_SELFIES:protein" in graph_row["target_tokens"]
+    assert "COMPONENT_SELFIES:dna" in graph_row["target_tokens"]
+    assert "COMPONENT_SELFIES:ligand" in graph_row["target_tokens"]
+    assert "CONTACT_PATCH:affinity_weighted_interface" in graph_row["target_tokens"]
+    assert any(tok.startswith("AFFINITY:Ki:4.2") for tok in graph_row["target_tokens"])
+    assert any(tok.startswith("AFFINITY_CONTACT:Ki:") for tok in graph_row["target_tokens"])
+    assert any(tok.startswith("COMPLEX_CONTACT:protein_dna:") for tok in graph_row["target_tokens"])
+    assert any(tok.startswith("COMPLEX_CONTACT:protein_ligand:") for tok in graph_row["target_tokens"])
+    assert "SEQ_STRUCT_DYN_PROXY:input:protein" in graph_row["target_tokens"]
+    assert "SEQ_STRUCT_DYN_PROXY:input:dna" in graph_row["target_tokens"]
+    assert "SEQ_STRUCT_DYN_PROXY:input:selfies" in graph_row["target_tokens"]
+    assert "ALL_ATOM_CONTACT:template_graph" in graph_row["target_tokens"]
+    assert "ALL_ATOM_COMPONENT:protein" in graph_row["target_tokens"]
+    assert "ALL_ATOM_COMPONENT:dna" in graph_row["target_tokens"]
+    assert "ALL_ATOM_COMPONENT:ligand" in graph_row["target_tokens"]
+    template_atoms = [node for node in graph_row["nodes"] if node["type"] == "all_atom_template_atom"]
+    assert template_atoms
+    components = {node.get("features", {}).get("component") for node in template_atoms}
+    assert {"protein", "dna", "ligand"}.issubset(components)
+    assert any(edge["type"] == "molecular_bond" and edge.get("features", {}).get("all_atom_contact_template") for edge in graph_row["edges"])
+    ex = GraphExample.from_dict(graph_row)
+    assert not graph_structure_violations(ex)
 
 
 def test_omg_mixed_contig_graphifies_cds_igs_bioselfies_and_jacobian_contacts():

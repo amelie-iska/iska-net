@@ -178,7 +178,31 @@ def smiles_to_selfies_text(smiles: str) -> str:
 
         return str(sf.encoder(text))
     except Exception:
-        return ""
+        tokens: list[str] = []
+        i = 0
+        pending_bond = ""
+        while i < len(text):
+            ch = text[i]
+            if ch in {"=", "#"}:
+                pending_bond = ch
+                i += 1
+                continue
+            if ch in {"(", ")", "[", "]", "@", "+", "-", "/", "\\", "."} or ch.isdigit():
+                i += 1
+                continue
+            symbol = ""
+            if i + 1 < len(text) and text[i : i + 2] in {"Cl", "Br"}:
+                symbol = text[i : i + 2]
+                i += 2
+            elif ch.isalpha():
+                symbol = ch.upper() if ch.islower() else ch
+                i += 1
+            else:
+                i += 1
+            if symbol in {"B", "C", "N", "O", "P", "S", "F", "Cl", "Br", "I"}:
+                tokens.append(f"[{pending_bond}{symbol}]")
+                pending_bond = ""
+        return "".join(tokens)
 
 
 def reference_bioselfies_tokens() -> list[str]:

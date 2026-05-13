@@ -83,6 +83,8 @@ The coordinate head is enabled in model-training phases, not in the standalone G
 
 Contact maps and attention maps are not a separate residue-only data structure. They are TokenGT source-token maps. The all-atom contact-template update makes structure-dynamics rows source-tokenize an unfolded atom/bond template derived from protein/DNA/RNA/SELFIES strings, so attention can include all-atom template nodes and covalent bond edge tokens under the active source-token budget. Affinity and PPI rows use the same template path, so `AFFINITY_CONTACT:*` and `PPI_CONTACT:*` priors can condition bond-aware atom/contact reasoning.
 
+Multimodal affinity coverage now includes PPI and mixed protein-nucleic-acid-ligand rows. The test path checks that protein-DNA-ligand affinity rows emit component SELFIES/BioSELFIES views, `AFFINITY_CONTACT:*`, `COMPLEX_CONTACT:protein_dna:*`, `COMPLEX_CONTACT:protein_ligand:*`, `ALL_ATOM_COMPONENT:*`, all-atom template atoms, and `molecular_bond` edge tokens. Simple ligand SMILES use a fallback SELFIES-style serialization when the optional `selfies` package is not installed, so ligand interaction rows are not dropped from the SELFIES/BioSELFIES training path.
+
 ## Current Full Local Corpus Status
 
 The current local biomed source set is fully materialized as local TSV plus graph JSONL:

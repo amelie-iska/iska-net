@@ -88,6 +88,7 @@ The order matters: model/data/train base configs first, run-local batch/epoch ov
 | Internal-coordinate readout | `RandomOrderTokenGT.internal_coordinate_head` | Generates torsion-like actions for protein, nucleic-acid, and ligand geometry | ready |
 | Internal-coordinate UMA feedback | `uma_internal_coordinate_head_oracle_loss` | Builds generated coarse geometries from model actions and scores them with UMA forces | ready |
 | Contact-map coupling | `uma_contact_alignment_loss` | Aligns emitted contact maps and embedding geometry with UMA-stage feedback records | ready |
+| Structure-dynamics export | `scripts/infer.py`, `records_to_multimodel_pdb`, `write_mdtraj_trajectory` | Writes multi-model PDB with sequence-derived `HELIX`/cartoon-view remarks plus MD-style DCD/XYZ trajectory artifacts | ready |
 | SFT GFlowNet | `config/train/gflownet_sft_4090.yaml` | Learns broad symbolic graph completions for function/annotation/assay rows | ready |
 | Structure-dynamics GFlowNet | `config/train/structure_dynamics_gflownet_4090.yaml` | Learns oracle/contact/internal-coordinate/adaptive-patch/all-atom Cartesian graph construction and can derive candidates from legacy curated biomed rows | ready |
 | UniProt features | `graphify_protein_ec` and `_add_uniprot_annotations` | Adds symbolic binding-site, active-site, cofactor, domain, GO, keyword, and PTM records | ready |
@@ -96,6 +97,8 @@ The order matters: model/data/train base configs first, run-local batch/epoch ov
 | Direct wrapper | `scripts/train_full_selected_250m_oracle_dynamics_direct.sh` | Jumps straight to phase-1 training with all oracle-dynamics overrides | ready |
 
 The contact-map tensors are source-token maps. They become all-atom and bond-aware when the source graph includes the all-atom template nodes and `molecular_bond` edge tokens. The 8192-source-token path budgets this template so ordinary sequence/BioSELFIES/context tokens are retained; full untruncated atom-plus-bond attention for very large proteins would require a larger context window or a chunked atom-patch schedule.
+
+The structure-dynamics inference smoke writes `.pdb`, `.dcd`, `.xyz`, and `.json` outputs. The PDB is multi-frame (`MODEL`/`ENDMDL`), includes `HELIX` secondary-structure records and `REMARK 902 VIEWER REPRESENTATION: CARTOON RECOMMENDED`, and includes `CONECT` records from generated/derived bonds. The DCD writer uses MDTraj with Angstrom-to-nanometer conversion at the file boundary.
 | Full wrapper | `scripts/run_full_phase1_phase2_training_250m_oracle_dynamics.sh` | Runs preflight/readiness plus full phase-1/phase-2 path | ready |
 
 ## W&B Metrics To Watch

@@ -39,7 +39,9 @@ def test_sequence_only_unigenx_sanitizes_structure_fields_and_uses_ar_model_forw
         "unigenx_qm9_train",
     )
     values, mask = extract_numeric_values(ex, 8)
-    assert sum(mask) == 0
+    assert ex.metadata["property_keys"] == []
+    assert set(ex.metadata["ignored_structure_fields"]) == {"atomic_symbols", "gap", "pos"}
+    assert sum(mask) <= 2  # string-derived SELFIES length/index features are allowed; structure/property labels are not.
     assert not any(node.type in {"atom", "atom_symbol", "coordinate", "energy", "force"} for node in ex.nodes)
     assert any(node.type in {"smiles", "selfies"} for node in ex.nodes)
     vocab = build_vocab([ex])

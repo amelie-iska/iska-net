@@ -10,7 +10,7 @@ from typing import Any, Iterable
 
 from tqdm.auto import tqdm
 
-from iska_reasoner.data.bioselfies import add_bioselfies_graph, bioselfies_from_modalities
+from iska_reasoner.data.bioselfies import add_bioselfies_graph, bioselfies_from_modalities, smiles_to_selfies_text
 from iska_reasoner.data.audio import extract_audio_features
 from iska_reasoner.data.hebrew import hebrew_text_graph
 from iska_reasoner.data.motifs import normalize_fragment
@@ -386,7 +386,7 @@ def smiles_to_selfies(smiles: str) -> str:
         encoded = sf.encoder(smiles)
         return encoded or ""
     except Exception:
-        return ""
+        return smiles_to_selfies_text(smiles)
 
 
 def _selfies_sequence_nodes(selfies: str, prefix: str = "selfies", max_len: int = 160) -> tuple[list[Node], list[Edge], list[str]]:
