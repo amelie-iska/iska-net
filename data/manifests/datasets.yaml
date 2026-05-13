@@ -280,8 +280,8 @@ datasets:
     default_limit: 0
     stage: rna_sequence_pretraining
     full_training_quality_rank: 5
-    full_training_max_rows: 1000000
-    notes: "RNA family sequence corpus. Row capped in the default 5B graph-token selection; family/clan metadata is retained, structure files are not consumed."
+    full_training_max_rows: 3000000
+    notes: "RNA family sequence corpus. Row capped in the default bio-scale selection; family/clan metadata is retained, structure files are not consumed."
   - name: rnacentral_8192_sequence_train
     dataset_id: multimolecule/rnacentral.8192
     config: default
@@ -291,8 +291,8 @@ datasets:
     default_limit: 0
     stage: rna_sequence_pretraining
     full_training_quality_rank: 6
-    full_training_max_rows: 500000
-    notes: "Broad non-coding RNA sequence source capped for the default 5B graph-token selection."
+    full_training_max_rows: 3000000
+    notes: "Broad non-coding RNA sequence source capped for the default bio-scale selection."
   - name: dna_coding_regions_train
     dataset_id: GustavoHCruz/DNA_coding_regions
     config: default
@@ -302,8 +302,8 @@ datasets:
     default_limit: 0
     stage: dna_sequence_pretraining
     full_training_quality_rank: 7
-    full_training_max_rows: 500000
-    notes: "DNA coding-region sequence rows with exon/intron/protein translation annotations. No structure files are consumed."
+    full_training_max_rows: 3000000
+    notes: "DNA coding-region sequence rows with exon/intron/protein translation annotations. No structure files are consumed. The public split currently has fewer than 3M rows, so the effective count is source-limited."
   - name: openmathreasoning_tir_train
     dataset_id: nvidia/OpenMathReasoning
     config: default

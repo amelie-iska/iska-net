@@ -63,11 +63,12 @@ def download_uniprot_features(
     *,
     query: str,
     min_existing_rows: int,
+    limit: int | None,
     force: bool,
     timeout: int,
 ) -> dict[str, Any]:
     existing_rows = _count_data_rows(output)
-    if not force and existing_rows >= min_existing_rows:
+    if not force and existing_rows >= min_existing_rows and (limit is None or existing_rows >= limit):
         return {
             "output": str(output),
             "rows": existing_rows,
@@ -94,9 +95,15 @@ def download_uniprot_features(
                 if line_no > 0:
                     rows += 1
                     progress.update(1)
+                    if limit is not None and rows >= limit:
+                        break
             progress.close()
         if rows <= 0:
             raise RuntimeError("UniProt feature export produced no data rows")
+        if rows < min_existing_rows and (limit is None or limit >= min_existing_rows):
+            raise RuntimeError(
+                f"UniProt feature export produced {rows} rows, below required minimum {min_existing_rows}"
+            )
         tmp.replace(output)
     except Exception:
         try:
@@ -110,6 +117,7 @@ def download_uniprot_features(
         "skipped": False,
         "source": "UniProtKB REST reviewed feature export",
         "query": query,
+        "limit": limit,
         "fields": UNIPROT_FIELDS,
         "corresponds_to": ["naturelm_uniprot_sprot"],
     }
@@ -233,6 +241,7 @@ def main() -> None:
     parser.add_argument("--summary", default="data/local/biomed_training_sources.summary.json")
     parser.add_argument("--uniprot-query", default="reviewed:true")
     parser.add_argument("--min-uniprot-rows", type=int, default=100000)
+    parser.add_argument("--limit-uniprot", type=int)
     parser.add_argument("--min-affinity-rows", type=int, default=1000000)
     parser.add_argument("--affinity-batch-size", type=int, default=65536)
     parser.add_argument("--limit-affinity", type=int)
@@ -248,6 +257,7 @@ def main() -> None:
             Path(args.uniprot_output),
             query=args.uniprot_query,
             min_existing_rows=args.min_uniprot_rows,
+            limit=args.limit_uniprot,
             force=args.force,
             timeout=args.timeout,
         )

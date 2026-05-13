@@ -47,6 +47,10 @@ TEST_RATIO="${TEST_RATIO:-0.05}"
 SPLIT_POLICY="${SPLIT_POLICY:-entity}"
 LIMIT_UNIPROT="${LIMIT_UNIPROT:-}"
 LIMIT_AFFINITY="${LIMIT_AFFINITY:-}"
+EXTRA_INPUT_GRAPHS="${EXTRA_INPUT_GRAPHS:-}"
+BUILD_BIO_PHASE_SUBSETS="${BUILD_BIO_PHASE_SUBSETS:-1}"
+STATIC_STRUCTURE_TARGET_ROWS="${STATIC_STRUCTURE_TARGET_ROWS:-25000}"
+STRUCTURE_DYNAMICS_TARGET_ROWS="${STRUCTURE_DYNAMICS_TARGET_ROWS:-2500}"
 
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/biomed_annotations_affinity_250m}"
 if [[ "$INCLUDE_ORIGINAL_FULL_SELECTED" == "1" && "$OUTPUT_DIR" == "outputs/biomed_annotations_affinity_250m" ]]; then
@@ -78,6 +82,9 @@ GFLOWNET_SFT_OUTPUT_DIR="${GFLOWNET_SFT_OUTPUT_DIR:-outputs/biomed_annotations_a
 STRUCTURE_DYNAMICS_GFLOWNET_OUTPUT_DIR="${STRUCTURE_DYNAMICS_GFLOWNET_OUTPUT_DIR:-outputs/biomed_annotations_affinity_structure_dynamics_gflownet_4090}"
 GFLOWNET_SFT_STAGE_NAME="${GFLOWNET_SFT_STAGE_NAME:-gflownet_sft}"
 STRUCTURE_DYNAMICS_GFLOWNET_STAGE_NAME="${STRUCTURE_DYNAMICS_GFLOWNET_STAGE_NAME:-structure_dynamics_gflownet}"
+STATIC_STRUCTURE_DATA_DIR="${STATIC_STRUCTURE_DATA_DIR:-${DATA_DIR}_static_structure}"
+STRUCTURE_DYNAMICS_GFLOWNET_DATA_DIR="${STRUCTURE_DYNAMICS_GFLOWNET_DATA_DIR:-${DATA_DIR}_structure_dynamics_2500}"
+GFLOWNET_SFT_DATA_DIR="${GFLOWNET_SFT_DATA_DIR:-$DATA_DIR}"
 if [[ "$INCLUDE_ORIGINAL_FULL_SELECTED" == "1" ]]; then
   if [[ "$GFLOWNET_SFT_OUTPUT_DIR" == "outputs/biomed_annotations_affinity_gflownet_sft_4090" ]]; then
     GFLOWNET_SFT_OUTPUT_DIR="outputs/biomed_annotations_affinity_plus_original_gflownet_sft_4090"
@@ -322,6 +329,11 @@ if [[ "$INCLUDE_ORIGINAL_FULL_SELECTED" == "1" ]]; then
     append_required_or_dry_run "$ORIGINAL_FULL_SELECTED_DIR/$split.jsonl" INPUT_GRAPHS
   done
 fi
+read -r -a EXTRA_INPUT_ARRAY <<< "$EXTRA_INPUT_GRAPHS"
+for graph in "${EXTRA_INPUT_ARRAY[@]}"; do
+  [[ -n "$graph" ]] || continue
+  append_required_or_dry_run "$graph" INPUT_GRAPHS
+done
 if [[ "${DRY_RUN:-0}" == "1" ]]; then
   if [[ "${#UNIPROT_INPUT_ARRAY[@]}" -gt 0 && ! " ${INPUT_GRAPHS[*]} " =~ " $UNIPROT_GRAPH_JSONL " ]]; then
     INPUT_GRAPHS+=("$UNIPROT_GRAPH_JSONL")
@@ -373,6 +385,21 @@ fi
 
 run_cx python scripts/check_dataset_integrity.py --data-dir "$DATA_DIR" --output "$DATA_DIR/integrity.json"
 
+if [[ "$BUILD_BIO_PHASE_SUBSETS" == "1" || "$BUILD_BIO_PHASE_SUBSETS" == "true" || "$BUILD_BIO_PHASE_SUBSETS" == "yes" || "$BUILD_BIO_PHASE_SUBSETS" == "force" ]]; then
+  subset_args=(
+    python scripts/build_bio_phase_subsets.py
+    --input-dir "$DATA_DIR"
+    --static-output-dir "$STATIC_STRUCTURE_DATA_DIR"
+    --dynamics-output-dir "$STRUCTURE_DYNAMICS_GFLOWNET_DATA_DIR"
+    --static-target-rows "$STATIC_STRUCTURE_TARGET_ROWS"
+    --dynamics-target-rows "$STRUCTURE_DYNAMICS_TARGET_ROWS"
+    --val-ratio "$VAL_RATIO"
+    --test-ratio "$TEST_RATIO"
+    --summary "$DATA_DIR/bio_phase_subsets.json"
+  )
+  run_cx "${subset_args[@]}"
+fi
+
 if [[ "${DRY_RUN:-0}" != "1" && ! -s "$DATA_DIR/train.jsonl" ]]; then
   printf 'Training split is missing or empty: %s/train.jsonl\n' "$DATA_DIR" >&2
   exit 1
@@ -382,6 +409,14 @@ if [[ "${DRY_RUN:-0}" != "1" && ! -s "$VAL_PATH" ]]; then
   VAL_PATH=""
 fi
 GFN_VALIDATION_DATA="${VAL_PATH:-$DATA_DIR/train.jsonl}"
+GFLOWNET_SFT_VAL_PATH="$GFLOWNET_SFT_DATA_DIR/val.jsonl"
+if [[ "${DRY_RUN:-0}" != "1" && ! -s "$GFLOWNET_SFT_VAL_PATH" ]]; then
+  GFLOWNET_SFT_VAL_PATH=""
+fi
+STRUCTURE_DYNAMICS_GFLOWNET_VAL_PATH="$STRUCTURE_DYNAMICS_GFLOWNET_DATA_DIR/val.jsonl"
+if [[ "${DRY_RUN:-0}" != "1" && ! -s "$STRUCTURE_DYNAMICS_GFLOWNET_VAL_PATH" ]]; then
+  STRUCTURE_DYNAMICS_GFLOWNET_VAL_PATH=""
+fi
 
 if [[ "$REUSE_VOCAB" == "auto" ]]; then
   if [[ -s "$VOCAB_PATH" ]]; then
@@ -393,6 +428,8 @@ fi
 
 OVERRIDE="$RUN_DIR/biomed_annotations_affinity_override.yaml"
 GFN_DATA_OVERRIDE="$RUN_DIR/biomed_annotations_affinity_data_override.yaml"
+GFN_SFT_DATA_OVERRIDE="$RUN_DIR/biomed_annotations_affinity_gflownet_sft_data_override.yaml"
+STRUCTURE_DYNAMICS_GFN_DATA_OVERRIDE="$RUN_DIR/biomed_annotations_affinity_structure_dynamics_gflownet_data_override.yaml"
 GFN_SFT_OVERRIDE="$RUN_DIR/biomed_annotations_affinity_gflownet_sft_override.yaml"
 STRUCTURE_DYNAMICS_GFN_OVERRIDE="$RUN_DIR/biomed_annotations_affinity_structure_dynamics_gflownet_override.yaml"
 cat > "$OVERRIDE" <<YAML
@@ -436,6 +473,16 @@ data:
   train_path: $DATA_DIR/train.jsonl
   val_path: $VAL_PATH
 YAML
+cat > "$GFN_SFT_DATA_OVERRIDE" <<YAML
+data:
+  train_path: $GFLOWNET_SFT_DATA_DIR/train.jsonl
+  val_path: $GFLOWNET_SFT_VAL_PATH
+YAML
+cat > "$STRUCTURE_DYNAMICS_GFN_DATA_OVERRIDE" <<YAML
+data:
+  train_path: $STRUCTURE_DYNAMICS_GFLOWNET_DATA_DIR/train.jsonl
+  val_path: $STRUCTURE_DYNAMICS_GFLOWNET_VAL_PATH
+YAML
 cat > "$GFN_SFT_OVERRIDE" <<YAML
 stage:
   name: $GFLOWNET_SFT_STAGE_NAME
@@ -454,7 +501,10 @@ printf 'Run directory: %s\n' "$RUN_DIR"
 printf 'Data dir: %s\n' "$DATA_DIR"
 printf 'Include original full selected corpus: %s (%s: %s)\n' "$INCLUDE_ORIGINAL_FULL_SELECTED" "$ORIGINAL_FULL_SELECTED_DIR" "$ORIGINAL_FULL_SELECTED_SPLITS"
 printf 'Input graph files: %s\n' "${INPUT_GRAPHS[*]}"
+printf 'Extra input graph files: %s\n' "${EXTRA_INPUT_GRAPHS:-<none>}"
 printf 'Train phases: %s\n' "$TRAIN_PHASES"
+printf 'Phase subsets: build=%s static=%s rows -> %s structure_dynamics=%s rows -> %s\n' \
+  "$BUILD_BIO_PHASE_SUBSETS" "$STATIC_STRUCTURE_TARGET_ROWS" "$STATIC_STRUCTURE_DATA_DIR" "$STRUCTURE_DYNAMICS_TARGET_ROWS" "$STRUCTURE_DYNAMICS_GFLOWNET_DATA_DIR"
 printf 'Model-stage coordinate head: uma=%s internal=%s long_all_atom_8192=%s configs=%s\n' \
   "$ENABLE_UMA_COORDINATE_HEAD" "$ENABLE_UMA_INTERNAL_COORDINATES" "$ENABLE_LONG_ALL_ATOM_CARTESIAN_HEAD" "${EXTRA_TRAIN_CONFIGS:-<none>}"
 printf 'Note: coordinate/internal-coordinate heads are model-stage overrides; standalone GFlowNet phases train token-set policies over the generated structure-dynamics candidate vocabulary.\n'
@@ -478,18 +528,21 @@ run_train_stage() {
 run_gflownet_stage() {
   local config="$1"
   local stage_override="$2"
-  run_cx python scripts/train_stage.py --config "$DATA_CONFIG" --config "$GFN_DATA_OVERRIDE" --config "$config" --config "$stage_override" --config "$WANDB_CONFIG"
+  local data_override="$3"
+  run_cx python scripts/train_stage.py --config "$DATA_CONFIG" --config "$data_override" --config "$config" --config "$stage_override" --config "$WANDB_CONFIG"
 }
 
 validate_gflownet_stage() {
   local config="$1"
   local validation_config="$2"
   local stage_override="$3"
+  local data_override="$4"
+  local validation_data="$5"
   if [[ "$VALIDATE_GFLOWNET" != "1" ]]; then
     return 0
   fi
   append_config "$validation_config"
-  run_cx python scripts/validate_gflownet.py --config "$DATA_CONFIG" --config "$GFN_DATA_OVERRIDE" --config "$config" --config "$stage_override" --config "$validation_config" --data "$GFN_VALIDATION_DATA" --device "$VALIDATION_DEVICE"
+  run_cx python scripts/validate_gflownet.py --config "$DATA_CONFIG" --config "$data_override" --config "$config" --config "$stage_override" --config "$validation_config" --data "$validation_data" --device "$VALIDATION_DEVICE"
 }
 
 IFS=',' read -r -a PHASE_ARRAY <<< "$TRAIN_PHASES"
@@ -501,22 +554,22 @@ for phase in "${PHASE_ARRAY[@]}"; do
       ;;
     gflownet_sft)
       append_config "$GFLOWNET_SFT_CONFIG"
-      run_gflownet_stage "$GFLOWNET_SFT_CONFIG" "$GFN_SFT_OVERRIDE"
-      validate_gflownet_stage "$GFLOWNET_SFT_CONFIG" "$GFLOWNET_SFT_VALIDATION_CONFIG" "$GFN_SFT_OVERRIDE"
+      run_gflownet_stage "$GFLOWNET_SFT_CONFIG" "$GFN_SFT_OVERRIDE" "$GFN_SFT_DATA_OVERRIDE"
+      validate_gflownet_stage "$GFLOWNET_SFT_CONFIG" "$GFLOWNET_SFT_VALIDATION_CONFIG" "$GFN_SFT_OVERRIDE" "$GFN_SFT_DATA_OVERRIDE" "${GFLOWNET_SFT_VAL_PATH:-$GFLOWNET_SFT_DATA_DIR/train.jsonl}"
       ;;
     structure_dynamics_gflownet)
       append_config "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG"
-      run_gflownet_stage "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG" "$STRUCTURE_DYNAMICS_GFN_OVERRIDE"
-      validate_gflownet_stage "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG" "$STRUCTURE_DYNAMICS_GFLOWNET_VALIDATION_CONFIG" "$STRUCTURE_DYNAMICS_GFN_OVERRIDE"
+      run_gflownet_stage "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG" "$STRUCTURE_DYNAMICS_GFN_OVERRIDE" "$STRUCTURE_DYNAMICS_GFN_DATA_OVERRIDE"
+      validate_gflownet_stage "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG" "$STRUCTURE_DYNAMICS_GFLOWNET_VALIDATION_CONFIG" "$STRUCTURE_DYNAMICS_GFN_OVERRIDE" "$STRUCTURE_DYNAMICS_GFN_DATA_OVERRIDE" "${STRUCTURE_DYNAMICS_GFLOWNET_VAL_PATH:-$STRUCTURE_DYNAMICS_GFLOWNET_DATA_DIR/train.jsonl}"
       ;;
     all)
       run_train_stage --config "$MODEL_CONFIG" --config "$DATA_CONFIG" --config "$TRAIN_CONFIG" --config "$OVERRIDE"
       append_config "$GFLOWNET_SFT_CONFIG"
       append_config "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG"
-      run_gflownet_stage "$GFLOWNET_SFT_CONFIG" "$GFN_SFT_OVERRIDE"
-      validate_gflownet_stage "$GFLOWNET_SFT_CONFIG" "$GFLOWNET_SFT_VALIDATION_CONFIG" "$GFN_SFT_OVERRIDE"
-      run_gflownet_stage "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG" "$STRUCTURE_DYNAMICS_GFN_OVERRIDE"
-      validate_gflownet_stage "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG" "$STRUCTURE_DYNAMICS_GFLOWNET_VALIDATION_CONFIG" "$STRUCTURE_DYNAMICS_GFN_OVERRIDE"
+      run_gflownet_stage "$GFLOWNET_SFT_CONFIG" "$GFN_SFT_OVERRIDE" "$GFN_SFT_DATA_OVERRIDE"
+      validate_gflownet_stage "$GFLOWNET_SFT_CONFIG" "$GFLOWNET_SFT_VALIDATION_CONFIG" "$GFN_SFT_OVERRIDE" "$GFN_SFT_DATA_OVERRIDE" "${GFLOWNET_SFT_VAL_PATH:-$GFLOWNET_SFT_DATA_DIR/train.jsonl}"
+      run_gflownet_stage "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG" "$STRUCTURE_DYNAMICS_GFN_OVERRIDE" "$STRUCTURE_DYNAMICS_GFN_DATA_OVERRIDE"
+      validate_gflownet_stage "$STRUCTURE_DYNAMICS_GFLOWNET_CONFIG" "$STRUCTURE_DYNAMICS_GFLOWNET_VALIDATION_CONFIG" "$STRUCTURE_DYNAMICS_GFN_OVERRIDE" "$STRUCTURE_DYNAMICS_GFN_DATA_OVERRIDE" "${STRUCTURE_DYNAMICS_GFLOWNET_VAL_PATH:-$STRUCTURE_DYNAMICS_GFLOWNET_DATA_DIR/train.jsonl}"
       ;;
     none)
       printf 'TRAIN_PHASES=none; dataset preparation and checks completed without training.\n'

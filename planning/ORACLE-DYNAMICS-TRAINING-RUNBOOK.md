@@ -47,6 +47,20 @@ For a dry run that prints the resolved override without launching training:
 DRY_RUN=1 ./scripts/train_full_selected_250m_oracle_dynamics_direct.sh
 ```
 
+For the current bio-scale all-atom contact run, which adds million-row sequence coverage before the UniProt/affinity SFT and GFlowNet stages:
+
+```bash
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-bio-scale-all-atom-contact" \
+BIO_SEQUENCE_TARGET_ROWS_PER_MODALITY=3000000 \
+PROTEIN_SEQUENCE_TARGET_ROWS=3000000 \
+STRUCTURE_DYNAMICS_TARGET_ROWS=2500 \
+STATIC_STRUCTURE_TARGET_ROWS=25000 \
+TRAIN_PHASES=all \
+./scripts/run_bio_scale_all_atom_contact_training.sh
+```
+
+That wrapper downloads/graphifies PubChem10M SELFIES, UniProt function text, Rfam, RNAcentral 8192, and DNA coding-region rows, and separately streams 3M UniProtKB protein feature rows. `scripts/check_bio_scale_targets.py` gates the run: protein, molecule SELFIES, and RNA must meet the requested target unless the source itself is smaller; the current DNA source is explicitly recorded as source-limited. `scripts/build_bio_phase_subsets.py` then carves out the 25k static-structure/contact subset and the 2,500-row structure-dynamics subset used by the dedicated GFlowNet phase.
+
 ## Manual Equivalent
 
 The direct wrapper resolves to this config stack:
@@ -95,6 +109,9 @@ The order matters: model/data/train base configs first, run-local batch/epoch ov
 | Complex affinity | `graphify_biomolecular_complex_affinity` | Adds protein/protein, protein/nucleic-acid, protein/ligand, and arbitrary component affinity rows | ready |
 | Training loop | `run_training_stage` | Combines token loss, UMA coordinate loss, contact loss, tqdm, JSONL metrics, checkpoints, W&B | ready |
 | Direct wrapper | `scripts/train_full_selected_250m_oracle_dynamics_direct.sh` | Jumps straight to phase-1 training with all oracle-dynamics overrides | ready |
+| Bio-scale wrapper | `scripts/run_bio_scale_all_atom_contact_training.sh` | Adds 3M-row protein/molecule/RNA sequence coverage where available, source-limited DNA reporting, 25k static-structure subset, and 2,500-row structure-dynamics subset before launching the all-atom contact training stack | ready |
+| Bio-scale target check | `scripts/check_bio_scale_targets.py` | Fails if protein, molecule SELFIES, or RNA fall short unexpectedly; warns for source-limited DNA/protein-function-text rows | ready |
+| Phase subset builder | `scripts/build_bio_phase_subsets.py` | Builds separate static-structure/contact and structure-dynamics train/validation/test JSONL subsets from the curated corpus | ready |
 
 The contact-map tensors are source-token maps. They become all-atom and bond-aware when the source graph includes the all-atom template nodes and `molecular_bond` edge tokens. The 8192-source-token path budgets this template so ordinary sequence/BioSELFIES/context tokens are retained; full untruncated atom-plus-bond attention for very large proteins would require a larger context window or a chunked atom-patch schedule.
 

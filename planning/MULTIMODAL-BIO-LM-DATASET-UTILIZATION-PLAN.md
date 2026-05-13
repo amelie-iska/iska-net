@@ -85,6 +85,19 @@ Contact maps and attention maps are not a separate residue-only data structure. 
 
 Multimodal affinity coverage now includes PPI and mixed protein-nucleic-acid-ligand rows. The test path checks that protein-DNA-ligand affinity rows emit component SELFIES/BioSELFIES views, `AFFINITY_CONTACT:*`, `COMPLEX_CONTACT:protein_dna:*`, `COMPLEX_CONTACT:protein_ligand:*`, `ALL_ATOM_COMPONENT:*`, all-atom template atoms, and `molecular_bond` edge tokens. Simple ligand SMILES use a fallback SELFIES-style serialization when the optional `selfies` package is not installed, so ligand interaction rows are not dropped from the SELFIES/BioSELFIES training path.
 
+The bio-scale training target is now explicit:
+
+| Modality | Source path | Target |
+|---|---|---:|
+| Protein | UniProtKB REST feature stream plus UniProt function text | 3,000,000 protein feature rows, plus all available function-text rows |
+| Molecule | PubChem10M SELFIES | at least 3,000,000 SELFIES rows in the bio-scale run |
+| RNA | Rfam plus RNAcentral 8192 | at least 3,000,000 RNA rows combined; the runner currently requests up to 3M from each source |
+| DNA | DNA coding regions | requested at 3,000,000 rows, but the current public split is source-limited and is reported as such |
+| Static structure/contact | rows with all-atom Cartesian/contact/template/contact-prior targets | 25,000-row default subset |
+| Structure dynamics | rows with static targets plus internal-coordinate, UMA/oracle, token-motion, adaptive/contact-patch, or affinity-contact targets | 2,500-row default subset |
+
+`scripts/check_bio_scale_targets.py` enforces the sequence-modality counts after graphification, and `scripts/build_bio_phase_subsets.py` creates the static-structure and structure-dynamics phase datasets. This keeps the long SFT stage broad while making the structure-dynamics GFlowNet budget intentionally small and high-signal.
+
 ## Current Full Local Corpus Status
 
 The current local biomed source set is fully materialized as local TSV plus graph JSONL:
@@ -189,6 +202,18 @@ Train the strict direct oracle-dynamics path:
 
 ```bash
 ./scripts/train_full_selected_250m_oracle_dynamics_direct.sh
+```
+
+Train the bio-scale all-atom contact path:
+
+```bash
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-bio-scale-all-atom-contact" \
+BIO_SEQUENCE_TARGET_ROWS_PER_MODALITY=3000000 \
+PROTEIN_SEQUENCE_TARGET_ROWS=3000000 \
+STRUCTURE_DYNAMICS_TARGET_ROWS=2500 \
+STATIC_STRUCTURE_TARGET_ROWS=25000 \
+TRAIN_PHASES=all \
+./scripts/run_bio_scale_all_atom_contact_training.sh
 ```
 
 ## Validation Rules
