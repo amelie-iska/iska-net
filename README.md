@@ -884,48 +884,18 @@ TRAIN_PHASES=all \
 ./scripts/run_full_biomed_annotations_affinity_training.sh
 ```
 
-The current machine does not have `tmux`, so the full run is launched with `nohup`. The robust launch below writes newly graphified all-atom-contact biomed sources to separate output directories, then lets the existing direct trainer handle curation, integrity checking, SFT, SFT-GFlowNet, and structure-dynamics GFlowNet:
+The current machine does not have `tmux`, so the full run is launched with `nohup`. The robust runner below writes newly graphified all-atom-contact biomed sources to separate output directories, then lets the existing direct trainer handle curation, integrity checking, SFT, SFT-GFlowNet, and structure-dynamics GFlowNet:
 
 ```bash
 mkdir -p logs/biomed_direct_training
 RUN_ID=20260513T003800Z-all-atom-contact
-nohup bash -lc '
-  set -euo pipefail
-  cd /home/iska/Documents/amelie/bio/iska-net
-  UNIPROT_GRAPH_JSONL=data/processed/uniprot_features_local_export_all_atom_contact/all.jsonl
-  AFFINITY_GRAPH_JSONL=data/processed/biomolecular_complex_affinity_all_atom_contact/all.jsonl
-  mkdir -p "$(dirname "$UNIPROT_GRAPH_JSONL")" "$(dirname "$AFFINITY_GRAPH_JSONL")"
-  conda run --no-capture-output -n tokengt python scripts/prepare_science_sources.py \
-    --kind uniprot_features \
-    --dataset-name uniprot_features_local_export_all_atom_contact \
-    --output "$UNIPROT_GRAPH_JSONL" \
-    --input data/local/uniprot_features.tsv
-  conda run --no-capture-output -n tokengt python scripts/prepare_science_sources.py \
-    --kind biomolecular_affinity \
-    --dataset-name biomolecular_complex_affinity_all_atom_contact \
-    --output "$AFFINITY_GRAPH_JSONL" \
-    --input data/local/complex_affinity.tsv
-  RUN_ID=20260513T003800Z-all-atom-contact \
-  UNIPROT_GRAPH_JSONL="$UNIPROT_GRAPH_JSONL" \
-  AFFINITY_GRAPH_JSONL="$AFFINITY_GRAPH_JSONL" \
-  DATA_DIR=data/processed/biomed_annotations_affinity_plus_original_full_selected_all_atom_contact \
-  ENABLE_LONG_ALL_ATOM_CARTESIAN_HEAD=1 \
-  OUTPUT_DIR=outputs/biomed_annotations_affinity_plus_original_250m_all_atom_contact \
-  VOCAB_PATH=outputs/biomed_annotations_affinity_plus_original_250m_all_atom_contact/vocab.jsonl \
-  REUSE_VOCAB=false \
-  TRAIN_BATCH_SIZE=1 \
-  TRAIN_EVAL_BATCH_SIZE=1 \
-  TRAIN_GRAD_ACCUM=36 \
-  PREPARE_FULL_BIOMED_SOURCES=0 \
-  PREPARE_UNIPROT=0 \
-  PREPARE_AFFINITY=0 \
-  CURATE_DATA=force \
-  FAST_CURATE=1 \
-  RESUME_CURATE=1 \
-  INCLUDE_ORIGINAL_FULL_SELECTED=1 \
-  TRAIN_PHASES=all \
-  ./scripts/train_biomed_annotations_affinity_direct.sh
-' > logs/biomed_direct_training/20260513T003800Z-all-atom-contact.nohup.log 2>&1 &
+RUN_ID="$RUN_ID" \
+PREPARE_UNIPROT=auto \
+PREPARE_AFFINITY=auto \
+CURATE_DATA=force \
+TRAIN_PHASES=all \
+nohup ./scripts/run_all_atom_contact_biomed_retrain.sh \
+  > logs/biomed_direct_training/20260513T003800Z-all-atom-contact.nohup.log 2>&1 &
 echo $! > logs/biomed_direct_training/20260513T003800Z-all-atom-contact.pid
 ```
 
