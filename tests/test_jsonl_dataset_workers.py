@@ -5,6 +5,7 @@ import json
 from torch.utils.data import DataLoader
 
 import iska_reasoner.data.dataset as dataset_module
+from iska_reasoner.data.curate import curate_files
 from iska_reasoner.data.dataset import GraphJsonlDataset
 
 
@@ -93,3 +94,29 @@ def test_dataset_reuses_offset_cache(monkeypatch, tmp_path):
     cached = GraphJsonlDataset(path)
     assert len(cached) == 3
     assert cached[2].id == "row-2"
+
+
+def test_dataset_reads_index_only_curated_rows(tmp_path):
+    source = tmp_path / "source.jsonl"
+    _write_jsonl(source, rows=8)
+    output_dir = tmp_path / "curated"
+
+    summary = curate_files(
+        [source],
+        output_dir,
+        val_ratio=0.0,
+        test_ratio=0.0,
+        split_policy="row_hash",
+        dedup_key="row_hash",
+        quality_mode="none",
+        fast_copy=True,
+        index_only=True,
+    )
+
+    assert summary["index_only"] is True
+    first_row = json.loads((output_dir / "train.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert first_row["__jsonl_ref__"] is True
+    assert first_row["path"] == str(source.resolve())
+    dataset = GraphJsonlDataset(output_dir / "train.jsonl")
+    assert len(dataset) == 8
+    assert dataset[0].id == "row-0"

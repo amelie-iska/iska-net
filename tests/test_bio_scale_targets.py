@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sys
 from pathlib import Path
 
@@ -15,6 +16,26 @@ from scripts.check_bio_scale_targets import check_targets
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+
+def _write_indexed_jsonl(source_path: Path, index_path: Path, rows: list[dict]) -> None:
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    refs = []
+    with source_path.open("wb") as handle:
+        for row in rows:
+            offset = handle.tell()
+            line = json.dumps(row, sort_keys=True).encode("utf-8") + b"\n"
+            handle.write(line)
+            refs.append(
+                {
+                    "__jsonl_ref__": True,
+                    "path": str(source_path.resolve()),
+                    "offset": offset,
+                    "sha1": hashlib.sha1(line.rstrip(b"\n")).hexdigest(),
+                }
+            )
+    index_path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in refs), encoding="utf-8")
 
 
 def test_bio_phase_subsets_select_static_and_dynamics_rows(tmp_path: Path):
@@ -49,6 +70,29 @@ def test_bio_phase_subsets_select_static_and_dynamics_rows(tmp_path: Path):
     assert "plain" not in static_rows
     assert "INTERNAL_COORD:protein_phi" in dynamics_rows
     assert "AFFINITY_CONTACT:strong" in dynamics_rows
+
+
+def test_bio_phase_subsets_dereference_index_only_rows(tmp_path: Path):
+    data = tmp_path / "curated"
+    rows = [
+        {"id": "plain", "target_tokens": ["ANSWER:no-structure"], "nodes": [], "edges": []},
+        {
+            "id": "d0",
+            "target_tokens": ["ALL_ATOM_CONTACT:protein:CA:CB", "PPI_CONTACT:strong"],
+            "nodes": [],
+            "edges": [],
+        },
+    ]
+    _write_indexed_jsonl(tmp_path / "source.jsonl", data / "train.jsonl", rows)
+    _write_jsonl(data / "val.jsonl", [])
+    _write_jsonl(data / "test.jsonl", [])
+
+    dynamics_summary = build_subset(data, tmp_path / "dynamics", 10, "structure_dynamics", 0.0, 0.0)
+
+    assert dynamics_summary["selected_rows"] == 1
+    dynamics_rows = (tmp_path / "dynamics" / "train.jsonl").read_text(encoding="utf-8")
+    assert "d0" in dynamics_rows
+    assert "__jsonl_ref__" not in dynamics_rows
 
 
 def test_check_bio_scale_targets_warns_only_for_source_limited_dna(tmp_path: Path):

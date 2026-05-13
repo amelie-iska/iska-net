@@ -139,6 +139,19 @@ def _write_jsonl_line(handle: TextIO, line: str) -> None:
     handle.write("\n")
 
 
+def _write_jsonl_ref(handle: TextIO, path: str | Path, offset: int, row_hash: str) -> None:
+    _write_jsonl_row(
+        handle,
+        {
+            "__jsonl_ref__": True,
+            "path": str(Path(path).resolve()),
+            "offset": int(offset),
+            "sha1": row_hash,
+        },
+        sort_keys=True,
+    )
+
+
 def _ensure_trailing_newline(path: Path) -> None:
     """Make append-resume safe after an interrupted write."""
     if not path.exists() or path.stat().st_size == 0:
@@ -162,6 +175,27 @@ def _iter_jsonl_lines(path: str | Path):
                 yield line
 
 
+def _iter_jsonl_lines_with_offsets(path: str | Path):
+    with Path(path).open("rb") as handle:
+        while True:
+            offset = handle.tell()
+            raw_line = handle.readline()
+            if not raw_line:
+                break
+            if raw_line.strip():
+                yield offset, raw_line.decode("utf-8", errors="replace").strip()
+
+
+def _line_dedup_hash(line: str) -> str:
+    try:
+        row = json.loads(line)
+    except json.JSONDecodeError:
+        return hashlib.sha1(line.encode("utf-8")).hexdigest()
+    if isinstance(row, dict) and row.get("__jsonl_ref__") and row.get("sha1"):
+        return str(row["sha1"])
+    return hashlib.sha1(line.encode("utf-8")).hexdigest()
+
+
 def _curate_resume_path(output_dir: Path) -> Path:
     return output_dir / ".curate_resume_state.json"
 
@@ -174,6 +208,7 @@ def _curate_resume_config(
     dedup_key: str,
     quality_mode: str,
     fast_copy: bool,
+    index_only: bool = False,
 ) -> dict[str, Any]:
     return {
         "input_paths": [str(Path(path)) for path in input_paths],
@@ -183,6 +218,7 @@ def _curate_resume_config(
         "dedup_key": dedup_key,
         "quality_mode": quality_mode,
         "fast_copy": fast_copy,
+        "index_only": index_only,
     }
 
 
@@ -228,7 +264,7 @@ def _load_fast_resume_outputs(temp_paths: dict[str, Path]) -> tuple[set[str], di
         if not path.exists():
             continue
         for line in _iter_jsonl_lines(path):
-            seen.add(hashlib.sha1(line.encode("utf-8")).hexdigest())
+            seen.add(_line_dedup_hash(line))
             split_counts[split] += 1
     return seen, split_counts
 
@@ -312,6 +348,7 @@ def curate_files(
     dedup_key: str = "graph_hash",
     quality_mode: str = "full",
     fast_copy: bool = False,
+    index_only: bool = False,
     resume: bool = False,
     resume_state_every: int = 10000,
 ) -> dict[str, Any]:
@@ -339,6 +376,8 @@ def curate_files(
     fast_row_mode = dedup_key == "row_hash" and quality_mode == "none" and not near_dedup_enabled
     if fast_copy and not fast_row_mode:
         raise ValueError("--fast-copy requires --dedup-key row_hash, --quality-mode none, and near-dedup disabled")
+    if index_only and not fast_row_mode:
+        raise ValueError("--index-only requires --dedup-key row_hash, --quality-mode none, and near-dedup disabled")
     if resume and not fast_row_mode:
         raise ValueError("--resume is supported only in row-hash/no-quality fast curation mode")
 
@@ -352,6 +391,7 @@ def curate_files(
         dedup_key,
         quality_mode,
         fast_copy,
+        index_only,
     )
     resume_state = _load_curate_resume_state(resume_path, resume_config) if resume else None
     processed_rows = {str(Path(path)): 0 for path in input_paths}
@@ -416,7 +456,12 @@ def curate_files(
                 input_key = str(Path(input_path))
                 skip_rows = processed_rows.get(input_key, 0) if resume_state is not None else 0
                 rows_seen_for_input = 0
-                for line in tqdm(_iter_jsonl_lines(input_path), desc=f"curate/{Path(input_path).name}", unit="row"):
+                iterator = (
+                    _iter_jsonl_lines_with_offsets(input_path)
+                    if index_only
+                    else ((0, line) for line in _iter_jsonl_lines(input_path))
+                )
+                for offset, line in tqdm(iterator, desc=f"curate/{Path(input_path).name}", unit="row"):
                     rows_seen_for_input += 1
                     if rows_seen_for_input <= skip_rows:
                         continue
@@ -438,7 +483,9 @@ def curate_files(
                     seen.add(h)
                     split_group_key = _row_split_key(row, split_policy, h)
                     split = split_name_from_key(split_group_key, val_ratio, test_ratio)
-                    if fast_copy:
+                    if index_only:
+                        _write_jsonl_ref(handles[split], input_path, offset, h)
+                    elif fast_copy:
                         _write_jsonl_line(handles[split], line)
                     else:
                         metadata = row.setdefault("metadata", {})
@@ -535,6 +582,7 @@ def curate_files(
         "quality_max": score_max if score_max is not None else 0.0,
         "task_counts": dict(task_counts),
         "split_report": split_report.to_dict(),
+        "index_only": index_only,
     }
     summary_tmp = output_dir / ".summary.json.tmp"
     summary_tmp.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
@@ -571,6 +619,11 @@ def main() -> None:
         help="In row-hash/no-quality mode, copy original JSONL rows to splits without injecting curation metadata.",
     )
     parser.add_argument(
+        "--index-only",
+        action="store_true",
+        help="In row-hash/no-quality mode, write source path/byte-offset references instead of copying full rows.",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="Resume interrupted row-hash/no-quality curation from temp split files and a progress state file.",
@@ -595,6 +648,7 @@ def main() -> None:
         dedup_key=args.dedup_key,
         quality_mode=args.quality_mode,
         fast_copy=args.fast_copy,
+        index_only=args.index_only,
         resume=args.resume,
         resume_state_every=args.resume_state_every,
     )

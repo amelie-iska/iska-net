@@ -57,11 +57,14 @@ BIO_SCALE_COMPACT=1 \
 BIO_SCALE_MAX_SEQUENCE_CHARS=8192 \
 STRUCTURE_DYNAMICS_TARGET_ROWS=2500 \
 STATIC_STRUCTURE_TARGET_ROWS=25000 \
+CURATE_INDEX_ONLY=1 \
 TRAIN_PHASES=all \
 ./scripts/run_bio_scale_all_atom_contact_training.sh
 ```
 
 That wrapper downloads/graphifies ConvergeBio UniRef50, PubChem10M SELFIES, UniProt function text, Rfam, RNAcentral 8192, and DNA coding-region rows. The broad sequence rows use compact BioSELFIES graphification by default so the million-row pretraining mix does not explode into terabyte-scale per-residue/per-base graphs. `scripts/check_bio_scale_targets.py` gates the run: protein, molecule SELFIES, and RNA must meet the requested target unless the source itself is smaller; the current DNA source is explicitly recorded as source-limited. `scripts/build_bio_phase_subsets.py` then carves out the 25k static-structure/contact subset and the 2,500-row all-atom structure-dynamics subset used by the dedicated GFlowNet phase. `PREPARE_PROTEIN_SCALE_REST=1` can switch on the slower UniProtKB REST protein-scale stream, but the default protein scale source is UniRef50 parquet.
+
+Keep `CURATE_INDEX_ONLY=1` for all all-atom affinity/contact runs. Curation still deduplicates and splits by entity, but the curated corpus stores JSONL references `{path, offset, sha1}` instead of duplicating the huge all-atom affinity rows. The training dataset loader dereferences those offsets lazily, and the static/structure-dynamics subset builder dereferences them before writing its much smaller phase-specific subsets. Disable this only for small smoke corpora or when fully materialized curated splits are explicitly needed.
 
 ## Manual Equivalent
 

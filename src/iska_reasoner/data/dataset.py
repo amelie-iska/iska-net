@@ -491,12 +491,14 @@ class GraphJsonlDataset(Dataset[GraphExample]):
         self.transform = transform
         self._handle = None
         self._handle_pid: int | None = None
+        self._ref_handles: dict[str, Any] = {}
+        self._ref_handles_pid: int | None = None
         self.examples: list[GraphExample] | None = None
         self.offsets: array[int] = array("Q")
         if preload:
             from iska_reasoner.utils.io import read_jsonl
 
-            self.examples = [GraphExample.from_dict(row) for row in read_jsonl(self.path)]
+            self.examples = [GraphExample.from_dict(self._resolve_jsonl_ref(row)) for row in read_jsonl(self.path)]
         else:
             self._build_offsets()
         if len(self) == 0:
@@ -593,18 +595,52 @@ class GraphJsonlDataset(Dataset[GraphExample]):
             self._handle_pid = pid
         self._handle.seek(int(self.offsets[index]))
         line = self._handle.readline()
-        return json.loads(line.decode("utf-8"))
+        return self._resolve_jsonl_ref(json.loads(line.decode("utf-8")))
+
+    def _resolve_jsonl_ref(self, row: dict[str, Any], depth: int = 0) -> dict[str, Any]:
+        if not isinstance(row, dict) or not row.get("__jsonl_ref__"):
+            return row
+        if depth > 2:
+            raise ValueError(f"Nested JSONL reference depth exceeded in {self.path}")
+        path_value = row.get("path")
+        offset_value = row.get("offset")
+        if path_value is None or offset_value is None:
+            raise ValueError(f"Malformed JSONL reference row in {self.path}: {row}")
+        pid = os.getpid()
+        if self._ref_handles_pid != pid:
+            for handle in self._ref_handles.values():
+                try:
+                    handle.close()
+                except OSError:
+                    pass
+            self._ref_handles = {}
+            self._ref_handles_pid = pid
+        ref_path = str(Path(path_value))
+        handle = self._ref_handles.get(ref_path)
+        if handle is None or handle.closed:
+            handle = Path(ref_path).open("rb")
+            self._ref_handles[ref_path] = handle
+        handle.seek(int(offset_value))
+        ref_line = handle.readline()
+        if not ref_line:
+            raise ValueError(f"JSONL reference points past EOF: {ref_path}:{offset_value}")
+        return self._resolve_jsonl_ref(json.loads(ref_line.decode("utf-8")), depth=depth + 1)
 
     def __getstate__(self) -> dict[str, Any]:
         state = dict(self.__dict__)
         state["_handle"] = None
         state["_handle_pid"] = None
+        state["_ref_handles"] = {}
+        state["_ref_handles_pid"] = None
         return state
 
     def __del__(self) -> None:
         handle = getattr(self, "_handle", None)
         if handle is not None and not handle.closed:
             handle.close()
+        for ref_handle in getattr(self, "_ref_handles", {}).values():
+            if ref_handle is not None and not ref_handle.closed:
+                ref_handle.close()
 
     def __len__(self) -> int:
         return len(self.examples) if self.examples is not None else len(self.offsets)

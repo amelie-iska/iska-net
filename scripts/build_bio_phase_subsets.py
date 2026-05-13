@@ -33,13 +33,37 @@ DYNAMICS_PREFIXES = (
 )
 
 
+_REF_HANDLES: dict[str, Any] = {}
+
+
+def _resolve_jsonl_ref(row: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(row, dict) or not row.get("__jsonl_ref__"):
+        return row
+    path = str(row.get("path") or "")
+    offset = row.get("offset")
+    if not path or offset is None:
+        return row
+    handle = _REF_HANDLES.get(path)
+    if handle is None or handle.closed:
+        handle = Path(path).open("rb")
+        _REF_HANDLES[path] = handle
+    handle.seek(int(offset))
+    line = handle.readline()
+    if not line:
+        return row
+    try:
+        return json.loads(line.decode("utf-8"))
+    except Exception:
+        return row
+
+
 def _read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
     with path.open("r", encoding="utf-8", errors="replace") as handle:
         for line in handle:
             line = line.strip()
             if not line:
                 continue
-            yield json.loads(line)
+            yield _resolve_jsonl_ref(json.loads(line))
 
 
 def _write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> int:
@@ -78,7 +102,7 @@ def _select_rows(input_dir: Path, target_rows: int, mode: str) -> list[dict[str,
                 for raw_line in raw:
                     before += len(raw_line)
                     try:
-                        row = json.loads(raw_line.decode("utf-8"))
+                        row = _resolve_jsonl_ref(json.loads(raw_line.decode("utf-8")))
                     except Exception:
                         continue
                     static_ok = _has_prefix(row, STATIC_PREFIXES)
@@ -158,6 +182,8 @@ def main() -> None:
         Path(args.summary).parent.mkdir(parents=True, exist_ok=True)
         Path(args.summary).write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(summary, indent=2, sort_keys=True))
+    for handle in _REF_HANDLES.values():
+        handle.close()
 
 
 if __name__ == "__main__":

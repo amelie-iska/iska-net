@@ -788,11 +788,14 @@ BIO_SCALE_COMPACT=1 \
 BIO_SCALE_MAX_SEQUENCE_CHARS=8192 \
 STRUCTURE_DYNAMICS_TARGET_ROWS=2500 \
 STATIC_STRUCTURE_TARGET_ROWS=25000 \
+CURATE_INDEX_ONLY=1 \
 TRAIN_PHASES=all \
 ./scripts/run_bio_scale_all_atom_contact_training.sh
 ```
 
 This runner downloads and graphifies the public protein/molecule/RNA/DNA sequence sources (`ConvergeBio/uniref50`, `PubChem10M_SELFIES`, UniProt function text, Rfam, RNAcentral 8192, and DNA coding regions), checks modality counts with `scripts/check_bio_scale_targets.py`, then passes those extra graph JSONL files into `scripts/run_all_atom_contact_biomed_retrain.sh`. The broad sequence rows are compact BioSELFIES inputs: each row carries a capped BioSELFIES string, modality/length/function/family targets, and a small sequence preview instead of a full per-residue or per-base graph. That is deliberate; all-atom Cartesian coordinate slots, all-atom contact maps, covalent bond edge tokens, affinity/PPI contact priors, and UMA/internal-coordinate dynamics are trained on the high-signal static and structure-dynamics phase subsets. The expected targets are at least 3M protein rows, 3M molecule SELFIES rows, and 3M RNA rows when the sources are available. DNA is requested at 3M but currently source-limited by the public coding-region split; the target check reports that explicitly. The structure-dynamics GFlowNet is trained on a dedicated 2,500-row dynamics subset, while static structure/contact prediction uses a larger 25,000-row subset by default. Set `PREPARE_PROTEIN_SCALE_REST=1` only if you intentionally want the slower UniProtKB REST feature stream for the 3M protein scale source; the default uses UniRef50 parquet for practical throughput and keeps the reviewed UniProt feature export for binding-site/function annotations.
+
+All-atom contact runs default to `CURATE_INDEX_ONLY=1` through `scripts/run_all_atom_contact_biomed_retrain.sh`. In this mode `scripts/curate_data.py` still performs row-hash deduplication and entity splitting, but curated `train/val/test.jsonl` rows are lightweight references containing the source JSONL path, byte offset, and SHA-1 instead of a second copy of the huge all-atom affinity record. `GraphJsonlDataset` dereferences those rows at training time, and `scripts/build_bio_phase_subsets.py` dereferences them before writing the smaller static and structure-dynamics subset rows. Set `CURATE_INDEX_ONLY=0` only when you intentionally want fully materialized curated splits and have enough disk for another copy of the source rows.
 
 If `data/local/uniprot_features.tsv` and `data/local/complex_affinity.tsv` already exist and you only want to rebuild graphification/curation before training:
 
@@ -826,6 +829,7 @@ PREPARE_AFFINITY=0 \
 CURATE_DATA=force \
 FAST_CURATE=1 \
 RESUME_CURATE=1 \
+CURATE_INDEX_ONLY=1 \
 INCLUDE_ORIGINAL_FULL_SELECTED=1 \
 TRAIN_PHASES=all \
 ./scripts/run_full_biomed_annotations_affinity_training.sh
@@ -909,6 +913,7 @@ RUN_ID="$RUN_ID" \
 PREPARE_UNIPROT=auto \
 PREPARE_AFFINITY=auto \
 CURATE_DATA=force \
+CURATE_INDEX_ONLY=1 \
 TRAIN_PHASES=all \
 nohup ./scripts/run_all_atom_contact_biomed_retrain.sh \
   > logs/biomed_direct_training/20260513T003800Z-all-atom-contact.nohup.log 2>&1 &
@@ -1668,6 +1673,7 @@ BIO_SCALE_MAX_SEQUENCE_CHARS=8192 \
 BIO_SEQUENCE_MAX_DOWNLOAD_GIB=128 \
 STRUCTURE_DYNAMICS_TARGET_ROWS=2500 \
 STATIC_STRUCTURE_TARGET_ROWS=25000 \
+CURATE_INDEX_ONLY=1 \
 TRAIN_PHASES=all \
 setsid ./scripts/run_bio_scale_all_atom_contact_training.sh \
   > logs/biomed_direct_training/20260513T193611Z-bio-scale-compact-all-atom-contact.nohup.log 2>&1 < /dev/null &

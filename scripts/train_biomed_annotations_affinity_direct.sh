@@ -41,6 +41,7 @@ PREPARE_AFFINITY="${PREPARE_AFFINITY:-auto}"
 CURATE_DATA="${CURATE_DATA:-auto}"
 FAST_CURATE="${FAST_CURATE:-1}"
 RESUME_CURATE="${RESUME_CURATE:-1}"
+CURATE_INDEX_ONLY="${CURATE_INDEX_ONLY:-auto}"
 CURATE_RESUME_STATE_EVERY="${CURATE_RESUME_STATE_EVERY:-10000}"
 VAL_RATIO="${VAL_RATIO:-0.05}"
 TEST_RATIO="${TEST_RATIO:-0.05}"
@@ -72,6 +73,18 @@ UMA_ALL_ATOM_CARTESIAN_HEAD_CONFIG="${UMA_ALL_ATOM_CARTESIAN_HEAD_CONFIG:-config
 ENABLE_UMA_CONTACT_GEOMETRY="${ENABLE_UMA_CONTACT_GEOMETRY:-0}"
 UMA_CONTACT_GEOMETRY_CONFIG="${UMA_CONTACT_GEOMETRY_CONFIG:-config/train/overrides/uma_contact_geometry_loss.yaml}"
 EXTRA_TRAIN_CONFIGS="${EXTRA_TRAIN_CONFIGS:-}"
+
+case "$(printf '%s' "$CURATE_INDEX_ONLY" | tr '[:upper:]' '[:lower:]')" in
+  auto)
+    if [[ "$ENABLE_LONG_ALL_ATOM_CARTESIAN_HEAD" == "1" || "$DATA_DIR" == *all_atom_contact* ]]; then
+      CURATE_INDEX_ONLY=1
+    else
+      CURATE_INDEX_ONLY=0
+    fi
+    ;;
+  1|true|yes|on) CURATE_INDEX_ONLY=1 ;;
+  *) CURATE_INDEX_ONLY=0 ;;
+esac
 
 TRAIN_PHASES="${TRAIN_PHASES:-sft}"
 GFLOWNET_SFT_CONFIG="${GFLOWNET_SFT_CONFIG:-config/train/biomed_annotations_affinity_gflownet_sft_4090.yaml}"
@@ -373,6 +386,9 @@ if [[ "$needs_curation" == "1" ]]; then
   curate_args=(python scripts/curate_data.py --output-dir "$DATA_DIR" --val-ratio "$VAL_RATIO" --test-ratio "$TEST_RATIO" --split-policy "$SPLIT_POLICY")
   if [[ "$FAST_CURATE" == "1" || "$FAST_CURATE" == "true" || "$FAST_CURATE" == "yes" ]]; then
     curate_args+=(--dedup-key row_hash --quality-mode none --fast-copy)
+    if [[ "$CURATE_INDEX_ONLY" == "1" ]]; then
+      curate_args+=(--index-only)
+    fi
     if [[ "$RESUME_CURATE" == "1" || "$RESUME_CURATE" == "true" || "$RESUME_CURATE" == "yes" ]]; then
       curate_args+=(--resume --resume-state-every "$CURATE_RESUME_STATE_EVERY")
     fi
@@ -503,6 +519,7 @@ printf 'Include original full selected corpus: %s (%s: %s)\n' "$INCLUDE_ORIGINAL
 printf 'Input graph files: %s\n' "${INPUT_GRAPHS[*]}"
 printf 'Extra input graph files: %s\n' "${EXTRA_INPUT_GRAPHS:-<none>}"
 printf 'Train phases: %s\n' "$TRAIN_PHASES"
+printf 'Curation: fast=%s resume=%s index_only=%s output=%s\n' "$FAST_CURATE" "$RESUME_CURATE" "$CURATE_INDEX_ONLY" "$DATA_DIR"
 printf 'Phase subsets: build=%s static=%s rows -> %s structure_dynamics=%s rows -> %s\n' \
   "$BUILD_BIO_PHASE_SUBSETS" "$STATIC_STRUCTURE_TARGET_ROWS" "$STATIC_STRUCTURE_DATA_DIR" "$STRUCTURE_DYNAMICS_TARGET_ROWS" "$STRUCTURE_DYNAMICS_GFLOWNET_DATA_DIR"
 printf 'Model-stage coordinate head: uma=%s internal=%s long_all_atom_8192=%s configs=%s\n' \
