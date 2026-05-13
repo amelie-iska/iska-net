@@ -81,6 +81,7 @@ The order matters: model/data/train base configs first, run-local batch/epoch ov
 | Sequence-only gate | `graph_structure_violations` | Allows BioSELFIES string molecule anchors while rejecting direct structure labels | ready |
 | UMA query batching | `RandomOrderCollator` | Emits `UMA_COORD_QUERY:*` slots from symbolic records using sequence-derived heavy-atom protein slots and RDKit molecule atoms with explicit hydrogens where available | ready |
 | All-atom Cartesian candidates | `multimodal_reference_tokens` and structure-dynamics graphification | Emits `ALL_ATOM_CARTESIAN:*`, `CARTESIAN_ATOM:*`, and `CARTESIAN_FRAME:*` output/action labels for UMA-scored generated coordinate proposals | ready |
+| All-atom contact template graph | `build_all_atom_contact_template_graph`, `graphify_multimodal`, `graphify_biomolecular_complex_affinity` | Adds sequence/SELFIES-initialized `all_atom_template_atom` source nodes and `molecular_bond` edge tokens so TokenGT contact maps can include atom and bond tokens | ready |
 | Coordinate readout | `RandomOrderTokenGT.coordinate_head` | Generates continuous coordinate proposals from hidden graph-of-thought state | ready |
 | UMA force surrogate | `uma_coordinate_head_oracle_loss` | Scores generated coordinates with FairChem/UMA and backpropagates detached-force surrogate | ready |
 | Internal-coordinate slots | `internal_coordinate_actions` and `RandomOrderCollator` | Emits `INTERNAL_COORD_QUERY:*` slots from symbolic sequence records | ready |
@@ -93,6 +94,8 @@ The order matters: model/data/train base configs first, run-local batch/epoch ov
 | Complex affinity | `graphify_biomolecular_complex_affinity` | Adds protein/protein, protein/nucleic-acid, protein/ligand, and arbitrary component affinity rows | ready |
 | Training loop | `run_training_stage` | Combines token loss, UMA coordinate loss, contact loss, tqdm, JSONL metrics, checkpoints, W&B | ready |
 | Direct wrapper | `scripts/train_full_selected_250m_oracle_dynamics_direct.sh` | Jumps straight to phase-1 training with all oracle-dynamics overrides | ready |
+
+The contact-map tensors are source-token maps. They become all-atom and bond-aware when the source graph includes the all-atom template nodes and `molecular_bond` edge tokens. The 8192-source-token path budgets this template so ordinary sequence/BioSELFIES/context tokens are retained; full untruncated atom-plus-bond attention for very large proteins would require a larger context window or a chunked atom-patch schedule.
 | Full wrapper | `scripts/run_full_phase1_phase2_training_250m_oracle_dynamics.sh` | Runs preflight/readiness plus full phase-1/phase-2 path | ready |
 
 ## W&B Metrics To Watch

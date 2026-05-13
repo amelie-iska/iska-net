@@ -48,6 +48,7 @@ The implemented path is intentionally practical for one RTX 4090: graph-rich exa
 - PLAN-H UGM multimodal graph-to-graph phase: sequence-first vocabulary for text/protein/SELFIES/SMILES/DNA/RNA/tool/oracle records, local-source preparation, continuous temperature conditioning, UMA-conditioned coupling/motion bins, function-description alignment, and oracle-feedback GFlowNet rewards.
 - BioSELFIES-style symbolic graphification for the oracle-dynamics addendum: `bioselfies`, `bio_selfies`, or `input_representation: bioselfies` rows decode into typed protein/DNA/RNA/SELFIES/atom/link/modification/patch/H-bond/torsion/thought graph records. UniProt feature, bioactivity, and biomolecular-complex affinity rows now also receive a BioSELFIES view automatically, including ligand SELFIES where a ligand SMILES string is available. The decoder is total, so unsupported tokens become explicit `bioselfies_unknown` nodes rather than parser failures. This is a symbolic interface only; it does not introduce coordinates, distance labels, force labels, energy labels, PDB/mmCIF/SDF files, conformer libraries, or MD trajectories.
 - All-atom Cartesian structure-dynamics candidate tokens for the strict oracle path: sequence/BioSELFIES rows can emit `ALL_ATOM_CARTESIAN:*`, `CARTESIAN_ATOM:protein:*`, `CARTESIAN_ATOM:nucleic_acid:*`, `CARTESIAN_ATOM:ligand:*`, and `CARTESIAN_FRAME:*` targets. These are output/action labels for model-generated coordinate proposals and UMA force scoring, not supervised coordinate labels.
+- All-atom contact-template source graphs for structure-dynamics rows: protein/DNA/RNA/SELFIES inputs now derive a sequence-initialized unfolded all-atom template with `all_atom_template_atom` nodes and `molecular_bond` edge tokens. Attention/contact maps are still TokenGT source-token maps; with this path enabled, those maps include atom tokens and covalent bond edge tokens under the configured `max_source_tokens` budget.
 - Internal-coordinate action slots for structure-dynamics training: symbolic protein/RNA/DNA/SELFIES rows can create `INTERNAL_COORD_QUERY:*` source slots, and the model emits torsion-like actions such as `protein_phi`, `protein_psi`, `protein_omega`, side-chain chi, nucleic-acid torsions, sugar pucker, and ligand torsion. These actions are trained through UMA-scored generated coarse geometries, not copied structure labels.
 - Separate GFlowNet tracks for SFT and structure-dynamics: `gflownet.mode: sft` learns diverse symbolic graph completions, while `gflownet.mode: structure_dynamics` filters candidates to BioSELFIES/all-atom Cartesian, internal-coordinate, contact-patch, adaptive-patch, temperature, token-motion, and UMA/oracle records. The structure-dynamics trainer can also derive those candidates from older curated biomed rows, so a failed GFlowNet phase can be restarted without re-running multi-hour curation when the SFT stages are already complete.
 - UniProt feature and binding-site graphification: local UniProt TSV/CSV/JSON/JSONL exports can add accessions, names, organism/taxon, GO, keywords, EC, domains, PTMs, variants, cofactors, catalytic activity, subcellular location, subunit text, binding sites, active sites, metal-binding sites, DNA-binding sites, and other sequence features.
@@ -271,7 +272,9 @@ The internal-coordinate path is still the preferred structure-dynamics quality u
 
 The coordinate head is a readout from embedding-space graph-of-thought state, not a replacement for it. UGM continues to learn graph reasoning through hidden thought states, graph-token autoregression, attention/contact fields, and verifier/oracle records. The UMA coordinate objective backpropagates through the coordinate readout into the same hidden embeddings and attention layers. With `uma_coordinate_dynamics_steps > 1`, each reasoning iteration is treated like a short physical-time step: the current generated coordinates are scored by UMA at the graph's continuous temperature, detached UMA forces roll the candidate forward, and the next score is logged and trained against the same latent graph state. Low-temperature examples emphasize stabilization and refinement; high-temperature examples keep broader contact and coordinate support.
 
-Mechanistically, the UMA stage treats evolving attention maps as contact fields. When `emit_attention_contact_maps` is enabled for the MHTA or hybrid FlashAttention/MHTA backend, MHTA Hilbert-distance scores are converted into row-normalized contact maps and fused with Euclidean hidden-state geometry plus Jensen-Shannon hidden-state geometry. The resulting field is a sequence-conditioned contact hypothesis, not a copied structure label. With `config/train/overrides/uma_contact_geometry_loss.yaml`, rows that carry explicit UMA feedback records train both the contact map and embedding geometry: low-temperature rows prefer sharper stabilization/refinement support, while high-temperature rows prefer higher contact-map and embedding-geometry entropy, broader token-motion records such as `explore`, `diversify`, and `expand`, and more diverse GFlowNet terminal states. FairChem/UMA then scores candidate molecules by energy and force at the graph-specified Kelvin temperature; this oracle reward is what reinforces the graph-state path.
+Mechanistically, the UMA stage treats evolving attention maps as contact fields. When `emit_attention_contact_maps` is enabled for the MHTA or hybrid FlashAttention/MHTA backend, MHTA Hilbert-distance scores are converted into row-normalized contact maps and fused with Euclidean hidden-state geometry plus Jensen-Shannon hidden-state geometry. The resulting field is a sequence-conditioned contact hypothesis, not a copied structure label. Structure-dynamics graphification now also inserts an all-atom contact template: each unfolded atom is a source node and each covalent bond is a `molecular_bond` source edge, so TokenGT attention can attend to residues/bases/SELFIES tokens, atom tokens, and bond edge tokens in one graph. With `config/train/overrides/uma_contact_geometry_loss.yaml`, rows that carry explicit UMA feedback records train both the contact map and embedding geometry: low-temperature rows prefer sharper stabilization/refinement support, while high-temperature rows prefer higher contact-map and embedding-geometry entropy, broader token-motion records such as `explore`, `diversify`, and `expand`, and more diverse GFlowNet terminal states. FairChem/UMA then scores candidate molecules by energy and force at the graph-specified Kelvin temperature; this oracle reward is what reinforces the graph-state path.
+
+For long inputs, the all-atom contact template is budgeted. With the 8192-source-token override, the graphifier reserves source tokens for ordinary sequence/BioSELFIES/context nodes and then fills the remaining budget with atom nodes plus bond edge tokens. Full all-atom Cartesian output files can still be generated for the configured trajectory atom cap; a complete untruncated all-atom attention map for very large proteins would require a larger context window or a patch/chunked atom-contact schedule.
 
 The live UMA backend is FairChem from the Amelie Schreiber fork at `data/external_repos/fairchem`. Repository acquisition alone does not download gated UMA weights. To run real oracle scoring, install/resolve FairChem dependencies, request access to `facebook/UMA` on Hugging Face, authenticate with `hf auth login`, and resolve the default UMA-S-1.2 checkpoint plus OMol reference tables:
 
@@ -859,6 +862,26 @@ TRAIN_PHASES=sft \
 ./scripts/run_full_biomed_annotations_affinity_training.sh
 ```
 
+The all-atom contact-template graph changes both source tokens and structure-dynamics target/action tokens. For that reason, reuse of the previous `20260503T204341Z` SFT checkpoint is not safe without explicit embedding and output-head resizing/remapping. The retrain path should rebuild graphification and use a fresh vocab/output directory:
+
+```bash
+ENABLE_LONG_ALL_ATOM_CARTESIAN_HEAD=1 \
+OUTPUT_DIR=outputs/biomed_annotations_affinity_plus_original_250m_all_atom_contact \
+VOCAB_PATH=outputs/biomed_annotations_affinity_plus_original_250m_all_atom_contact/vocab.jsonl \
+REUSE_VOCAB=false \
+PREPARE_FULL_BIOMED_SOURCES=0 \
+PREPARE_UNIPROT=force \
+PREPARE_AFFINITY=force \
+CURATE_DATA=force \
+FAST_CURATE=1 \
+RESUME_CURATE=1 \
+INCLUDE_ORIGINAL_FULL_SELECTED=1 \
+TRAIN_PHASES=all \
+./scripts/run_full_biomed_annotations_affinity_training.sh
+```
+
+To skip the multi-hour curation when a newly graphified and integrity-checked all-atom-contact corpus already exists, set `PREPARE_UNIPROT=0 PREPARE_AFFINITY=0 CURATE_DATA=0` and keep `REUSE_VOCAB=false` for the first all-atom-contact training run.
+
 After a stable standard run, try:
 
 ```bash
@@ -1302,6 +1325,37 @@ conda run --no-capture-output -n tokengt python scripts/train_stage.py \
   --config config/train/overrides/wandb_online.yaml
 ```
 
+For the newer all-atom contact-template implementation, retrain from a fresh vocab as shown above rather than using the old checkpoint.
+
+## Latest All-Atom Contact Verification
+
+Commands run after enabling atom-node plus bond-edge contact templates:
+
+```bash
+conda run --no-capture-output -n tokengt pytest -q tests/test_multimodal_graphs.py tests/test_gflownet_smoke.py
+
+rm -rf /tmp/iska_all_atom_contact_smoke && mkdir -p /tmp/iska_all_atom_contact_smoke
+conda run --no-capture-output -n tokengt python scripts/prepare_multimodal_sources.py \
+  --synthetic --count 8 \
+  --dataset-name all_atom_contact_smoke \
+  --output /tmp/iska_all_atom_contact_smoke/all.jsonl
+conda run --no-capture-output -n tokengt python scripts/curate_data.py \
+  --input /tmp/iska_all_atom_contact_smoke/all.jsonl \
+  --output-dir /tmp/iska_all_atom_contact_smoke/curated \
+  --val-ratio 0.25 \
+  --test-ratio 0.0 \
+  --split-policy row_hash
+conda run --no-capture-output -n tokengt python scripts/train_stage.py \
+  --config config/model/tiny_tokengt.yaml \
+  --config config/data/multimodal_graphs.yaml \
+  --config config/train/multimodal_phase2_tiny.yaml \
+  --config /tmp/iska_all_atom_contact_smoke/train_override.yaml
+
+conda run --no-capture-output -n tokengt pytest -q
+```
+
+Result: focused multimodal/GFlowNet tests passed, the tiny two-step training smoke completed, and the full test suite passed (`115 passed, 23 warnings`).
+
 ## Key Files
 
 - `planning/PLAN-A.md`: implementation plan and research decisions.
@@ -1500,3 +1554,33 @@ conda run -n tokengt python scripts/infer.py \
 ```
 
 The structure-dynamics files are generated model/oracle artifacts. They are not supervised PDB/SDF/mmCIF/MD labels copied from training data.
+
+## Latest All-Atom Contact Train Command
+
+The verification train command run after the all-atom contact-template update was:
+
+```bash
+conda run --no-capture-output -n tokengt python scripts/train_stage.py \
+  --config config/model/tiny_tokengt.yaml \
+  --config config/data/multimodal_graphs.yaml \
+  --config config/train/multimodal_phase2_tiny.yaml \
+  --config /tmp/iska_all_atom_contact_smoke/train_override.yaml
+```
+
+For the real full retrain, do not resume the old `20260503T204341Z` SFT checkpoint unless embedding/head resizing is implemented. Rebuild graphification and train with a fresh vocab/output directory:
+
+```bash
+ENABLE_LONG_ALL_ATOM_CARTESIAN_HEAD=1 \
+OUTPUT_DIR=outputs/biomed_annotations_affinity_plus_original_250m_all_atom_contact \
+VOCAB_PATH=outputs/biomed_annotations_affinity_plus_original_250m_all_atom_contact/vocab.jsonl \
+REUSE_VOCAB=false \
+PREPARE_FULL_BIOMED_SOURCES=0 \
+PREPARE_UNIPROT=force \
+PREPARE_AFFINITY=force \
+CURATE_DATA=force \
+FAST_CURATE=1 \
+RESUME_CURATE=1 \
+INCLUDE_ORIGINAL_FULL_SELECTED=1 \
+TRAIN_PHASES=all \
+./scripts/run_full_biomed_annotations_affinity_training.sh
+```

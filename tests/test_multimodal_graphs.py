@@ -34,6 +34,7 @@ from iska_reasoner.data.motifs import (
 )
 from iska_reasoner.data.vocab import build_vocab
 from iska_reasoner.graph.orders import build_orders, oracle_enabling_order, scientific_graph_order
+from iska_reasoner.graph.schema import graph_source_tokens
 from iska_reasoner.inference.generate import predict_uma_coordinate_frame
 from iska_reasoner.models.random_order_tokengt import RandomOrderTokenGT, RandomOrderTokenGTConfig
 from iska_reasoner.tools import multimodal_metrics_for_example, multimodal_oracle_reward, verify_example_tokens
@@ -102,6 +103,10 @@ def test_multimodal_reference_vocab_contains_required_families():
     assert "CONTACT_PATCH:hbond" in tokens
     assert "SEQ_STRUCT_DYN_PROXY:all_atom_cartesian" in tokens
     assert "ALL_ATOM_CARTESIAN:enabled" in tokens
+    assert "ALL_ATOM_CONTACT:template_graph" in tokens
+    assert "ALL_ATOM_CONTACT:bond_edge_tokens" in tokens
+    assert "ALL_ATOM_BOND:covalent" in tokens
+    assert "ALL_ATOM_ELEMENT:C" in tokens
     assert "CARTESIAN_ATOM:protein:CA" in tokens
     assert "CARTESIAN_ATOM:ligand:heavy_atom" in tokens
     assert "CARTESIAN_FRAME:temperature_conditioned" in tokens
@@ -188,7 +193,14 @@ def test_multimodal_graphification_defaults_to_sequence_only():
     assert "CONTACT_PATCH:hbond" in ex.target_tokens
     assert "SEQ_STRUCT_DYN_PROXY:all_atom_cartesian" in ex.target_tokens
     assert "ALL_ATOM_CARTESIAN:enabled" in ex.target_tokens
+    assert "ALL_ATOM_CONTACT:template_graph" in ex.target_tokens
+    assert "ALL_ATOM_CONTACT:bond_edge_tokens" in ex.target_tokens
     assert "CARTESIAN_ATOM:protein:CA" in ex.target_tokens
+    assert any(node.type == "all_atom_template_atom" for node in ex.nodes)
+    assert any(edge.type == "molecular_bond" and edge.features.get("all_atom_contact_template") for edge in ex.edges)
+    source_tokens, source_kinds, _endpoints, _identifiers = graph_source_tokens(ex)
+    assert "edge" in source_kinds
+    assert any(tok.startswith("E|molecular_bond|all_atom_contact_template_atom_") for tok in source_tokens)
     assert not graph_structure_violations(ex)
     assert ex.metadata["ignored_structure_fields"]
     assert ex.metadata["temperature"] == 315.5
@@ -200,7 +212,7 @@ def test_multimodal_graphification_defaults_to_sequence_only():
     assert temp.features["kelvin_norm"] == 0.155
     metrics = multimodal_metrics_for_example(ex)
     assert metrics["multimodal/modality_count_mean"] >= 3
-    assert metrics["multimodal/bond_type_coverage_rate"] == 0.0
+    assert metrics["multimodal/bond_type_coverage_rate"] > 0.0
     assert metrics["multimodal/attention_bin_count_mean"] > 0
     assert metrics["multimodal/uma_coupling_bin_count_mean"] > 0
     assert metrics["multimodal/uma_influence_bin_count_mean"] > 0
@@ -368,11 +380,15 @@ def test_biomolecular_complex_affinity_rows_support_non_ligand_complexes():
     assert "CONTACT_PATCH:affinity_weighted_interface" in graph_row["target_tokens"]
     assert "PPI_CONTACT:affinity_weighted" in graph_row["target_tokens"]
     assert "SEQ_STRUCT_DYN_PROXY:input:protein" in graph_row["target_tokens"]
+    assert "ALL_ATOM_CONTACT:template_graph" in graph_row["target_tokens"]
+    assert "ALL_ATOM_CONTACT:bond_edge_tokens" in graph_row["target_tokens"]
     assert "CARTESIAN_ATOM:protein:CA" in graph_row["target_tokens"]
     assert any(tok.startswith("AFFINITY:Kd:12") for tok in graph_row["target_tokens"])
     assert any(tok.startswith("AFFINITY_CONTACT:Kd:") for tok in graph_row["target_tokens"])
     assert any(node["type"] == "binding_affinity" for node in graph_row["nodes"])
+    assert any(node["type"] == "all_atom_template_atom" for node in graph_row["nodes"])
     assert any(node["type"] == "ppi_affinity_contact_candidate" for node in graph_row["nodes"])
+    assert any(edge["type"] == "molecular_bond" and edge.get("features", {}).get("all_atom_contact_template") for edge in graph_row["edges"])
     assert any(edge["type"] == "forms_complex_with" for edge in graph_row["edges"])
 
 
@@ -485,7 +501,7 @@ def test_multimodal_dispatch_and_collator_build():
     ex = graphify_multimodal(_row(), 0, "local_multimodal_graph_to_graph", molecular_input_policy=ALLOW_STRUCTURE)
     assert rows[0]["task"] == "multimodal_graph_to_graph"
     vocab = build_vocab([ex], extra_tokens=multimodal_reference_tokens())
-    collator = RandomOrderCollator(vocab, max_source_tokens=128, max_target_tokens=96, max_numeric_targets=8)
+    collator = RandomOrderCollator(vocab, max_source_tokens=128, max_target_tokens=160, max_seq_len=512, max_numeric_targets=8)
     batch = collator([ex])
     assert batch["input_ids"].shape[0] == 1
     assert batch["numeric_mask"].sum().item() >= 3

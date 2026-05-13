@@ -509,6 +509,7 @@ def _add_bioselfies_and_structure_dynamics(
             temp_k,
             function_text,
             "structure_dynamics_proxy",
+            components=components,
         )
     )
 

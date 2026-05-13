@@ -149,5 +149,7 @@ def test_structure_dynamics_candidate_vocab_derives_biomed_candidates_when_rows_
     assert "ANSWER:legacy" not in candidates
     assert "UGM:task:structure_dynamics_proxy" in candidates
     assert "ALL_ATOM_CARTESIAN:enabled" in candidates
+    assert "ALL_ATOM_CONTACT:template_graph" in candidates
+    assert "ALL_ATOM_CONTACT:bond_edge_tokens" in candidates
     assert "CARTESIAN_ATOM:protein:CA" in candidates
     assert "CARTESIAN_ATOM:ligand:heavy_atom" in candidates

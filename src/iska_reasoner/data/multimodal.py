@@ -5,6 +5,12 @@ import re
 from pathlib import Path
 from typing import Any, Iterable
 
+from iska_reasoner.data.all_atom_templates import (
+    ALL_ATOM_BOND_TYPES,
+    ALL_ATOM_CONTACT_TOKENS,
+    ALL_ATOM_ELEMENTS,
+    build_all_atom_contact_template_graph,
+)
 from iska_reasoner.data.bioselfies import (
     add_bioselfies_graph,
     bioselfies_from_modalities,
@@ -580,6 +586,10 @@ def multimodal_reference_tokens(extra_motif_paths: Iterable[str | Path] = ()) ->
     tokens.extend(f"SEQ_STRUCT_DYN_PROXY:{token}" for token in STRUCTURE_DYNAMICS_PROXY_TOKENS)
     tokens.extend(f"SEQ_STRUCT_DYN_PROXY:input:{modality}" for modality in ["selfies", "protein", "dna", "rna"])
     tokens.extend(["ALL_ATOM_CARTESIAN:enabled", "ALL_ATOM_CARTESIAN:uma_force_scored", "ALL_ATOM_CARTESIAN:sequence_conditioned"])
+    tokens.extend(ALL_ATOM_CONTACT_TOKENS)
+    tokens.extend(f"ALL_ATOM_BOND:{bond_type}" for bond_type in ALL_ATOM_BOND_TYPES)
+    tokens.extend(f"ALL_ATOM_ELEMENT:{element}" for element in ALL_ATOM_ELEMENTS)
+    tokens.extend(f"ALL_ATOM_COMPONENT:{component}" for component in ["protein", "dna", "rna", "ligand"])
     tokens.extend(f"CARTESIAN_ATOM:protein:{slot}" for slot in CARTESIAN_PROTEIN_ATOM_SLOTS)
     tokens.extend(f"CARTESIAN_ATOM:nucleic_acid:{slot}" for slot in CARTESIAN_NUCLEIC_ATOM_SLOTS)
     tokens.extend(f"CARTESIAN_ATOM:ligand:{slot}" for slot in CARTESIAN_LIGAND_ATOM_SLOTS)
@@ -1048,6 +1058,7 @@ def _add_oracle_attention_motion_priors(
     temp_k: float | None,
     function_text: str,
     task_value: str,
+    components: Iterable[tuple[str, str, str]] = (),
 ) -> list[str]:
     modality_set = {item for item in modalities if item in {"selfies", "protein", "dna", "rna"}}
     if not modality_set:
@@ -1113,6 +1124,15 @@ def _add_oracle_attention_motion_priors(
     if temp_k is not None:
         tokens.append("CARTESIAN_FRAME:temperature_conditioned")
     tokens.append("CARTESIAN_FRAME:uma_rollout_step")
+
+    template_nodes, template_edges, template_tokens, _template_summary = build_all_atom_contact_template_graph(
+        row,
+        components=components,
+        source_root_id="structure_dynamics_proxy",
+    )
+    nodes.extend(template_nodes)
+    edges.extend(template_edges)
+    tokens.extend(template_tokens)
 
     sequence_nodes = [
         node

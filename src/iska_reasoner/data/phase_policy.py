@@ -99,7 +99,7 @@ STRUCTURE_TARGET_PREFIXES = (
     "STRUCT_MOTIF:",
 )
 
-MOLECULAR_GRAPH_NODE_TYPES = {"atom", "atom_symbol"}
+MOLECULAR_GRAPH_NODE_TYPES = {"atom", "atom_symbol", "all_atom_template_atom"}
 MOLECULAR_GRAPH_EDGE_TYPES = {"bond", "contains_atom", "molecular_bond"}
 MOLECULAR_GRAPH_TARGET_PREFIXES = ("ATOM:", "BOND:")
 PHYSICS_PROPERTY_NODE_TYPES = {"molecule_property"}
@@ -170,7 +170,25 @@ def _has_string_molecule_anchor(example: GraphExample) -> bool:
     metadata = example.metadata or {}
     if metadata.get("smiles") or metadata.get("selfies"):
         return True
-    return any(node.type in {"smiles", "selfies", "bioselfies", "molecule_sequence"} for node in example.nodes)
+    if set(metadata.get("modalities") or []).intersection({"protein", "dna", "rna", "selfies", "bioselfies"}):
+        return True
+    return any(
+        node.type
+        in {
+            "smiles",
+            "selfies",
+            "bioselfies",
+            "component_selfies",
+            "molecule_sequence",
+            "protein_sequence",
+            "dna_sequence",
+            "rna_sequence",
+            "amino_acid",
+            "dna_base",
+            "rna_base",
+        }
+        for node in example.nodes
+    )
 
 
 def graph_structure_violations(example: GraphExample) -> list[str]:

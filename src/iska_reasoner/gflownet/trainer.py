@@ -40,6 +40,10 @@ STRUCTURE_DYNAMICS_PREFIXES = (
     "TORSION:",
     "HYBRID:",
     "ALL_ATOM_CARTESIAN:",
+    "ALL_ATOM_CONTACT:",
+    "ALL_ATOM_BOND:",
+    "ALL_ATOM_ELEMENT:",
+    "ALL_ATOM_COMPONENT:",
     "CARTESIAN_ATOM:",
     "CARTESIAN_FRAME:",
 )
@@ -55,6 +59,8 @@ STRUCTURE_DYNAMICS_CORE_TOKENS = (
     "SEQ_STRUCT_DYN_PROXY:uma_scored",
     "SEQ_STRUCT_DYN_PROXY:all_atom_cartesian",
     "ALL_ATOM_CARTESIAN:enabled",
+    "ALL_ATOM_CONTACT:template_graph",
+    "ALL_ATOM_CONTACT:bond_edge_tokens",
 )
 
 
@@ -171,6 +177,18 @@ def _derived_structure_dynamics_tokens(example: Any) -> list[str]:
         "ALL_ATOM_CARTESIAN:enabled",
         "ALL_ATOM_CARTESIAN:uma_force_scored",
         "ALL_ATOM_CARTESIAN:sequence_conditioned",
+        "ALL_ATOM_CONTACT:template_graph",
+        "ALL_ATOM_CONTACT:atom_nodes",
+        "ALL_ATOM_CONTACT:bond_edge_tokens",
+        "ALL_ATOM_CONTACT:attention_map_ready",
+        "ALL_ATOM_CONTACT:source_bioselfies",
+        "ALL_ATOM_CONTACT:budgeted_8192_source",
+        "ALL_ATOM_BOND:covalent",
+        "ALL_ATOM_BOND:peptide",
+        "ALL_ATOM_ELEMENT:C",
+        "ALL_ATOM_ELEMENT:N",
+        "ALL_ATOM_ELEMENT:O",
+        "ALL_ATOM_ELEMENT:H",
         "CARTESIAN_FRAME:uma_rollout_step",
         "TOKEN_MOTION:uma:refine:b32",
         "TOKEN_MOTION:uma:stabilize:b32",
@@ -278,7 +296,7 @@ def _structure_dynamics_reward(
     dynamics_precision = len(set(predicted_dynamics) & target_dynamics_set) / max(1, len(set(predicted_dynamics)))
     has_internal = any(tok.startswith("INTERNAL_COORD:") for tok in predicted_tokens)
     has_patch = any(tok.startswith("ADAPTIVE_PATCH:") for tok in predicted_tokens)
-    has_contact = any(tok.startswith(("CONTACT_PATCH:", "HBOND:")) for tok in predicted_tokens)
+    has_contact = any(tok.startswith(("CONTACT_PATCH:", "HBOND:", "ALL_ATOM_CONTACT:")) for tok in predicted_tokens)
     has_temperature = "SEQ_STRUCT_DYN_PROXY:temperature_conditioned" in pred_set or any(tok.startswith("TEMP") for tok in pred_set)
     has_oracle = "UGM:oracle:uma_feedback" in pred_set or any(tok.startswith(("TOKEN_COUPLING:uma:", "UMA_INFLUENCE:uma:", "UMA_TRAJ_BIN:")) for tok in pred_set)
     has_motion = any(tok.startswith("TOKEN_MOTION:uma:") for tok in predicted_tokens)

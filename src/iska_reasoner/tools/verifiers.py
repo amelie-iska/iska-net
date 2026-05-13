@@ -427,7 +427,7 @@ def multimodal_metrics_for_example(example: GraphExample) -> dict[str, float]:
     modalities = example.metadata.get("modalities") or []
     if not isinstance(modalities, list):
         modalities = []
-    atom_nodes = [node for node in example.nodes if node.type == "atom"]
+    atom_nodes = [node for node in example.nodes if node.type in {"atom", "all_atom_template_atom"}]
     bond_edges = [edge for edge in example.edges if edge.type == "molecular_bond"]
     typed_bonds = [edge for edge in bond_edges if edge.features.get("bond_type")]
     coordinate_nodes = [node for node in example.nodes if node.type == "coordinate_3d"]
