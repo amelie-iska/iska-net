@@ -133,6 +133,65 @@ datasets:
     assert summary["per_dataset_limits"]["rfam_sequence_train"] == 1
 
 
+def test_graphify_full_parquet_manifest_compact_bio_scale_rows(tmp_path: Path):
+    manifest = tmp_path / "datasets.yaml"
+    raw = tmp_path / "raw_hf_full"
+    out = tmp_path / "processed"
+    dataset_dir = raw / "rnacentral_8192_sequence_train" / "default" / "train"
+    dataset_dir.mkdir(parents=True)
+    pq.write_table(
+        pa.table(
+            {
+                "sequence": ["AUGCAUGC" * 200],
+                "accession": ["URS0000000001"],
+                "description": ["RNAcentral compact-row smoke entry"],
+            }
+        ),
+        dataset_dir / "0000.parquet",
+    )
+    manifest.write_text(
+        """
+datasets:
+  - name: rnacentral_8192_sequence_train
+    dataset_id: rnacentral/example
+    config: default
+    split: train
+    method: hf_rows
+    default_limit: 0
+    stage: rna_sequence_pretraining
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = graphify_full_parquet_manifest(
+        manifest_path=manifest,
+        raw_full_dir=raw,
+        output_dir=out,
+        max_rows_per_dataset=None,
+        row_budget=None,
+        val_ratio=0.0,
+        test_ratio=0.0,
+        batch_size=1,
+        progress_every=1,
+        nested_progress=False,
+        bio_scale_compact=True,
+        bio_scale_max_sequence_chars=8192,
+    )
+
+    row = json.loads((out / "train.jsonl").read_text(encoding="utf-8"))
+    node_by_type = {node["type"]: node for node in row["nodes"]}
+    assert summary["bio_scale_compact"] is True
+    assert summary["total"] == 1
+    assert row["task"] == "bio_sequence_scale_pretraining"
+    assert row["metadata"]["input_representation"] == "bioselfies"
+    assert row["metadata"]["modalities"] == ["rna", "bioselfies"]
+    assert "UGM:tokenizer:bioselfies" in row["target_tokens"]
+    assert "BIOSEQ:modality:rna" in row["target_tokens"]
+    assert node_by_type["bioselfies_compact"]["value"].startswith("[RNA:A][RNA:U]")
+    assert node_by_type["rna_sequence_compact"]["features"]["preview_length"] <= 512
+
+
 def test_count_graph_tokens_budget_guard_writes_summary_then_fails(tmp_path: Path):
     path = tmp_path / "train.jsonl"
     output = tmp_path / "token_counts.json"

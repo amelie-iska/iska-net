@@ -96,7 +96,7 @@ The bio-scale training target is now explicit:
 | Static structure/contact | rows with all-atom Cartesian/contact/template/contact-prior targets | 25,000-row default subset |
 | Structure dynamics | rows with static targets plus internal-coordinate, UMA/oracle, token-motion, adaptive/contact-patch, or affinity-contact targets | 2,500-row default subset |
 
-`scripts/check_bio_scale_targets.py` enforces the sequence-modality counts after graphification, and `scripts/build_bio_phase_subsets.py` creates the static-structure and structure-dynamics phase datasets. This keeps the long SFT stage broad while making the structure-dynamics GFlowNet budget intentionally small and high-signal.
+`scripts/check_bio_scale_targets.py` enforces the sequence-modality counts after graphification, and `scripts/build_bio_phase_subsets.py` creates the static-structure and structure-dynamics phase datasets. The million-row sequence sources are compact BioSELFIES inputs by default: the graph row stores capped BioSELFIES content, a small preview, and modality/function/family targets instead of expanding every broad pretraining row into a dense per-token graph. This keeps the long SFT stage broad and disk-feasible while making the structure-dynamics GFlowNet budget intentionally small, all-atom, affinity-aware, and high-signal.
 
 ## Current Full Local Corpus Status
 
@@ -210,6 +210,8 @@ Train the bio-scale all-atom contact path:
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-bio-scale-all-atom-contact" \
 BIO_SEQUENCE_TARGET_ROWS_PER_MODALITY=3000000 \
 PROTEIN_SEQUENCE_TARGET_ROWS=3000000 \
+BIO_SCALE_COMPACT=1 \
+BIO_SCALE_MAX_SEQUENCE_CHARS=8192 \
 STRUCTURE_DYNAMICS_TARGET_ROWS=2500 \
 STATIC_STRUCTURE_TARGET_ROWS=25000 \
 TRAIN_PHASES=all \

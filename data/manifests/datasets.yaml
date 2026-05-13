@@ -281,7 +281,6 @@ datasets:
     stage: protein_sequence_pretraining
     full_training_quality_rank: 4
     full_training_max_rows: 3000000
-    full_training_max_parquet_files: 7
     notes: "UniRef50 representative protein sequences from UniProt, converted to Parquet. The bio-scale run uses this source for practical million-row protein sequence coverage; UniProt feature exports still provide binding-site/function annotations."
   - name: rfam_sequence_train
     dataset_id: multimolecule/rfam

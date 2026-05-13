@@ -130,7 +130,7 @@ conda run -n tokengt python scripts/validate_dataset_catalog.py --no-progress
 
 This writes `data/manifests/dataset_catalog_status.json` and `planning/DATASET-CATALOG-STATUS.md`. The previous completed public-corpus baseline had 19 active public Hugging Face parquet entries, 7,328,008 graph examples, and 1,107,708,497 untruncated model-sequence graph tokens. The current expanded default selection adds ranked graph-reasoning, scientific sequence/function, math verifier, and curated general text sources under a 5B untruncated graph-token guard.
 
-The highest-priority additions are included by default in `data/manifests/datasets.yaml`: OpenAI GraphWalks, GraphWiz GraphInstruct-RFT-72K, PubChem10M SELFIES, UniRef50/UniProt sequence rows, UniProt function text descriptions, Rfam, RNAcentral, DNA coding regions, OpenMathReasoning TIR, OpenMathReasoning GenSelect, and a DCLM baseline 1B slice. GraphWalks is intentionally first because it most directly trains long-context graph-state reasoning. The bio-scale row caps are set for million-row modality coverage where the public source supports it: ConvergeBio UniRef50 at 3M rows for protein sequences, PubChem10M SELFIES at 8M rows for molecule strings, Rfam at 3M rows, RNAcentral at 3M rows, and DNA coding regions at 3M requested rows. The current public DNA coding split is source-limited below 3M rows, so the bio-scale runner records that as a warning rather than silently pretending the DNA target was met. OpenMathReasoning TIR remains capped at 1.3M and GenSelect at 300k.
+The highest-priority additions are included by default in `data/manifests/datasets.yaml`: OpenAI GraphWalks, GraphWiz GraphInstruct-RFT-72K, PubChem10M SELFIES, UniRef50/UniProt sequence rows, UniProt function text descriptions, Rfam, RNAcentral, DNA coding regions, OpenMathReasoning TIR, OpenMathReasoning GenSelect, and a DCLM baseline 1B slice. GraphWalks is intentionally first because it most directly trains long-context graph-state reasoning. The bio-scale row caps are set for million-row modality coverage where the public source supports it: ConvergeBio UniRef50 at 3M rows for protein sequences, PubChem10M SELFIES at 8M rows for molecule strings, Rfam at 3M rows, RNAcentral at 3M rows, and DNA coding regions at 3M requested rows. The bio-scale runner now graphifies those broad sequence sources as compact BioSELFIES/sequence records by default (`BIO_SCALE_COMPACT=1`, `BIO_SCALE_MAX_SEQUENCE_CHARS=8192`) so multi-million-row modality coverage is disk-feasible; richer all-atom Cartesian, bond-edge, contact-template, PPI, affinity, and UMA/internal-coordinate rows are kept for the static structure/contact and structure-dynamics phase subsets. The current public DNA coding split is source-limited below 3M rows, so the bio-scale runner records that as a warning rather than silently pretending the DNA target was met. OpenMathReasoning TIR remains capped at 1.3M and GenSelect at 300k.
 
 Run the complete full selected-corpus training sequence with live tqdm streaming, per-stage logs, a master log, progress/status files, and runner-level W&B events:
 
@@ -784,13 +784,15 @@ For the current bio-scale requirement, use the all-atom contact runner that adds
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-bio-scale-all-atom-contact" \
 BIO_SEQUENCE_TARGET_ROWS_PER_MODALITY=3000000 \
 PROTEIN_SEQUENCE_TARGET_ROWS=3000000 \
+BIO_SCALE_COMPACT=1 \
+BIO_SCALE_MAX_SEQUENCE_CHARS=8192 \
 STRUCTURE_DYNAMICS_TARGET_ROWS=2500 \
 STATIC_STRUCTURE_TARGET_ROWS=25000 \
 TRAIN_PHASES=all \
 ./scripts/run_bio_scale_all_atom_contact_training.sh
 ```
 
-This runner downloads and graphifies the public protein/molecule/RNA/DNA sequence sources (`ConvergeBio/uniref50`, `PubChem10M_SELFIES`, UniProt function text, Rfam, RNAcentral 8192, and DNA coding regions), checks modality counts with `scripts/check_bio_scale_targets.py`, then passes those extra graph JSONL files into `scripts/run_all_atom_contact_biomed_retrain.sh`. The expected targets are at least 3M protein rows, 3M molecule SELFIES rows, and 3M RNA rows when the sources are available. DNA is requested at 3M but currently source-limited by the public coding-region split; the target check reports that explicitly. The structure-dynamics GFlowNet is trained on a dedicated 2,500-row dynamics subset, while static structure/contact prediction uses a larger 25,000-row subset by default. Set `PREPARE_PROTEIN_SCALE_REST=1` only if you intentionally want the slower UniProtKB REST feature stream for the 3M protein scale source; the default uses UniRef50 parquet for practical throughput and keeps the reviewed UniProt feature export for binding-site/function annotations.
+This runner downloads and graphifies the public protein/molecule/RNA/DNA sequence sources (`ConvergeBio/uniref50`, `PubChem10M_SELFIES`, UniProt function text, Rfam, RNAcentral 8192, and DNA coding regions), checks modality counts with `scripts/check_bio_scale_targets.py`, then passes those extra graph JSONL files into `scripts/run_all_atom_contact_biomed_retrain.sh`. The broad sequence rows are compact BioSELFIES inputs: each row carries a capped BioSELFIES string, modality/length/function/family targets, and a small sequence preview instead of a full per-residue or per-base graph. That is deliberate; all-atom Cartesian coordinate slots, all-atom contact maps, covalent bond edge tokens, affinity/PPI contact priors, and UMA/internal-coordinate dynamics are trained on the high-signal static and structure-dynamics phase subsets. The expected targets are at least 3M protein rows, 3M molecule SELFIES rows, and 3M RNA rows when the sources are available. DNA is requested at 3M but currently source-limited by the public coding-region split; the target check reports that explicitly. The structure-dynamics GFlowNet is trained on a dedicated 2,500-row dynamics subset, while static structure/contact prediction uses a larger 25,000-row subset by default. Set `PREPARE_PROTEIN_SCALE_REST=1` only if you intentionally want the slower UniProtKB REST feature stream for the 3M protein scale source; the default uses UniRef50 parquet for practical throughput and keeps the reviewed UniProt feature export for binding-site/function annotations.
 
 If `data/local/uniprot_features.tsv` and `data/local/complex_affinity.tsv` already exist and you only want to rebuild graphification/curation before training:
 
@@ -1658,19 +1660,21 @@ TRAIN_PHASES=all \
 For the current bio-scale run with million-row sequence targets, 25k static-structure/contact rows, and 2,500 structure-dynamics rows, the launch command is:
 
 ```bash
-RUN_ID=20260513T011100Z-bio-scale-all-atom-contact \
+RUN_ID=20260513T193611Z-bio-scale-compact-all-atom-contact \
 BIO_SEQUENCE_TARGET_ROWS_PER_MODALITY=3000000 \
 PROTEIN_SEQUENCE_TARGET_ROWS=3000000 \
+BIO_SCALE_COMPACT=1 \
+BIO_SCALE_MAX_SEQUENCE_CHARS=8192 \
 STRUCTURE_DYNAMICS_TARGET_ROWS=2500 \
 STATIC_STRUCTURE_TARGET_ROWS=25000 \
 TRAIN_PHASES=all \
 setsid ./scripts/run_bio_scale_all_atom_contact_training.sh \
-  > logs/biomed_direct_training/20260513T011100Z-bio-scale-all-atom-contact.nohup.log 2>&1 < /dev/null &
-echo $! > logs/biomed_direct_training/20260513T011100Z-bio-scale-all-atom-contact.pid
+  > logs/biomed_direct_training/20260513T193611Z-bio-scale-compact-all-atom-contact.nohup.log 2>&1 < /dev/null &
+echo $! > logs/biomed_direct_training/20260513T193611Z-bio-scale-compact-all-atom-contact.pid
 ```
 
 Tail that run with:
 
 ```bash
-tail -f logs/biomed_direct_training/20260513T011100Z-bio-scale-all-atom-contact.nohup.log
+tail -f logs/biomed_direct_training/20260513T193611Z-bio-scale-compact-all-atom-contact.nohup.log
 ```

@@ -19,6 +19,8 @@ PROTEIN_SCALE_SUMMARY="${PROTEIN_SCALE_SUMMARY:-data/local/biomed_training_sourc
 BIO_SCALE_TARGET_SUMMARY="${BIO_SCALE_TARGET_SUMMARY:-data/processed/bio_sequence_scale_mix/bio_scale_target_summary.json}"
 BIO_SEQUENCE_MAX_DOWNLOAD_GIB="${BIO_SEQUENCE_MAX_DOWNLOAD_GIB:-64}"
 BIO_SCALE_ALLOW_SOURCE_LIMITED="${BIO_SCALE_ALLOW_SOURCE_LIMITED:-dna,protein_function_text}"
+BIO_SCALE_COMPACT="${BIO_SCALE_COMPACT:-1}"
+BIO_SCALE_MAX_SEQUENCE_CHARS="${BIO_SCALE_MAX_SEQUENCE_CHARS:-8192}"
 PREPARE_PROTEIN_SCALE_REST="${PREPARE_PROTEIN_SCALE_REST:-0}"
 UNIPROT_SCALE_QUERY="${UNIPROT_SCALE_QUERY:-*}"
 UNIPROT_FEATURES_INPUTS="${UNIPROT_FEATURES_INPUTS:-data/local/uniprot_features.tsv}"
@@ -80,8 +82,12 @@ graphify_args=(
   --test-ratio 0.01
   --batch-size 8192
   --progress-every 10000
+  --no-nested-progress
   --max-rows-per-dataset "$BIO_SEQUENCE_TARGET_ROWS_PER_MODALITY"
 )
+if [[ "$BIO_SCALE_COMPACT" == "1" || "$BIO_SCALE_COMPACT" == "true" || "$BIO_SCALE_COMPACT" == "yes" ]]; then
+  graphify_args+=(--bio-scale-compact --bio-scale-max-sequence-chars "$BIO_SCALE_MAX_SEQUENCE_CHARS")
+fi
 for dataset in "${BIO_SEQUENCE_DATASETS[@]}"; do
   graphify_args+=(--dataset "$dataset")
 done

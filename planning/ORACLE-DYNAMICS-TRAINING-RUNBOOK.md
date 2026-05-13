@@ -53,13 +53,15 @@ For the current bio-scale all-atom contact run, which adds million-row sequence 
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-bio-scale-all-atom-contact" \
 BIO_SEQUENCE_TARGET_ROWS_PER_MODALITY=3000000 \
 PROTEIN_SEQUENCE_TARGET_ROWS=3000000 \
+BIO_SCALE_COMPACT=1 \
+BIO_SCALE_MAX_SEQUENCE_CHARS=8192 \
 STRUCTURE_DYNAMICS_TARGET_ROWS=2500 \
 STATIC_STRUCTURE_TARGET_ROWS=25000 \
 TRAIN_PHASES=all \
 ./scripts/run_bio_scale_all_atom_contact_training.sh
 ```
 
-That wrapper downloads/graphifies ConvergeBio UniRef50, PubChem10M SELFIES, UniProt function text, Rfam, RNAcentral 8192, and DNA coding-region rows. `scripts/check_bio_scale_targets.py` gates the run: protein, molecule SELFIES, and RNA must meet the requested target unless the source itself is smaller; the current DNA source is explicitly recorded as source-limited. `scripts/build_bio_phase_subsets.py` then carves out the 25k static-structure/contact subset and the 2,500-row structure-dynamics subset used by the dedicated GFlowNet phase. `PREPARE_PROTEIN_SCALE_REST=1` can switch on the slower UniProtKB REST protein-scale stream, but the default protein scale source is UniRef50 parquet.
+That wrapper downloads/graphifies ConvergeBio UniRef50, PubChem10M SELFIES, UniProt function text, Rfam, RNAcentral 8192, and DNA coding-region rows. The broad sequence rows use compact BioSELFIES graphification by default so the million-row pretraining mix does not explode into terabyte-scale per-residue/per-base graphs. `scripts/check_bio_scale_targets.py` gates the run: protein, molecule SELFIES, and RNA must meet the requested target unless the source itself is smaller; the current DNA source is explicitly recorded as source-limited. `scripts/build_bio_phase_subsets.py` then carves out the 25k static-structure/contact subset and the 2,500-row all-atom structure-dynamics subset used by the dedicated GFlowNet phase. `PREPARE_PROTEIN_SCALE_REST=1` can switch on the slower UniProtKB REST protein-scale stream, but the default protein scale source is UniRef50 parquet.
 
 ## Manual Equivalent
 
