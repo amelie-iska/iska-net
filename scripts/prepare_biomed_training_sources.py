@@ -8,6 +8,7 @@ import os
 import sys
 import tempfile
 import urllib.parse
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,65 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
+def _next_link(headers: Any) -> str | None:
+    link = headers.get("Link")
+    if not link:
+        return None
+    for part in link.split(","):
+        part = part.strip()
+        if 'rel="next"' not in part:
+            continue
+        if part.startswith("<") and ">" in part:
+            return part[1 : part.index(">")]
+    return None
+
+
+def _download_uniprot_search_pages(
+    output: Path,
+    *,
+    query: str,
+    limit: int | None,
+    timeout: int,
+) -> int:
+    params = {
+        "query": query,
+        "format": "tsv",
+        "compressed": "false",
+        "fields": ",".join(UNIPROT_FIELDS),
+        "size": "500",
+    }
+    url: str | None = "https://rest.uniprot.org/uniprotkb/search?" + urllib.parse.urlencode(params)
+    rows = 0
+    header_written = False
+    total: int | None = limit
+    with output.open("wb") as handle:
+        progress = tqdm(total=total, desc="source/uniprot_features/search", unit="row")
+        while url is not None and (limit is None or rows < limit):
+            request = urllib.request.Request(url, headers={"User-Agent": "iska-net-biomed-source-prep/1.0"})
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                if total is None:
+                    header_total = response.headers.get("x-total-results") or response.headers.get("X-Total-Results")
+                    if header_total and header_total.isdigit():
+                        total = int(header_total)
+                        progress.reset(total=total)
+                payload = response.read()
+                lines = payload.splitlines(keepends=True)
+                if not lines:
+                    break
+                if not header_written:
+                    handle.write(lines[0])
+                    header_written = True
+                for line in lines[1:]:
+                    if limit is not None and rows >= limit:
+                        break
+                    handle.write(line)
+                    rows += 1
+                    progress.update(1)
+                url = _next_link(response.headers)
+        progress.close()
+    return rows
+
+
 def download_uniprot_features(
     output: Path,
     *,
@@ -87,17 +147,24 @@ def download_uniprot_features(
     request = urllib.request.Request(url, headers={"User-Agent": "iska-net-biomed-source-prep/1.0"})
     tmp = _atomic_text_path(output)
     rows = 0
+    method = "stream"
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response, tmp.open("wb") as handle:
-            progress = tqdm(desc="source/uniprot_features", unit="row")
-            for line_no, line in enumerate(response):
-                handle.write(line)
-                if line_no > 0:
-                    rows += 1
-                    progress.update(1)
-                    if limit is not None and rows >= limit:
-                        break
-            progress.close()
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response, tmp.open("wb") as handle:
+                progress = tqdm(desc="source/uniprot_features/stream", unit="row")
+                for line_no, line in enumerate(response):
+                    handle.write(line)
+                    if line_no > 0:
+                        rows += 1
+                        progress.update(1)
+                        if limit is not None and rows >= limit:
+                            break
+                progress.close()
+        except urllib.error.HTTPError as exc:
+            if exc.code != 403:
+                raise
+            method = "search_pages"
+            rows = _download_uniprot_search_pages(tmp, query=query, limit=limit, timeout=timeout)
         if rows <= 0:
             raise RuntimeError("UniProt feature export produced no data rows")
         if rows < min_existing_rows and (limit is None or limit >= min_existing_rows):
@@ -116,6 +183,7 @@ def download_uniprot_features(
         "rows": rows,
         "skipped": False,
         "source": "UniProtKB REST reviewed feature export",
+        "method": method,
         "query": query,
         "limit": limit,
         "fields": UNIPROT_FIELDS,
