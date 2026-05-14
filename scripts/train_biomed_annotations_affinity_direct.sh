@@ -52,6 +52,7 @@ EXTRA_INPUT_GRAPHS="${EXTRA_INPUT_GRAPHS:-}"
 BUILD_BIO_PHASE_SUBSETS="${BUILD_BIO_PHASE_SUBSETS:-1}"
 STATIC_STRUCTURE_TARGET_ROWS="${STATIC_STRUCTURE_TARGET_ROWS:-25000}"
 STRUCTURE_DYNAMICS_TARGET_ROWS="${STRUCTURE_DYNAMICS_TARGET_ROWS:-2500}"
+BIO_PHASE_SUBSET_SOURCE_INCLUDE="${BIO_PHASE_SUBSET_SOURCE_INCLUDE:-auto}"
 
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/biomed_annotations_affinity_250m}"
 if [[ "$INCLUDE_ORIGINAL_FULL_SELECTED" == "1" && "$OUTPUT_DIR" == "outputs/biomed_annotations_affinity_250m" ]]; then
@@ -85,6 +86,13 @@ case "$(printf '%s' "$CURATE_INDEX_ONLY" | tr '[:upper:]' '[:lower:]')" in
   1|true|yes|on) CURATE_INDEX_ONLY=1 ;;
   *) CURATE_INDEX_ONLY=0 ;;
 esac
+if [[ "$BIO_PHASE_SUBSET_SOURCE_INCLUDE" == "auto" ]]; then
+  if [[ "$CURATE_INDEX_ONLY" == "1" && ( "$ENABLE_LONG_ALL_ATOM_CARTESIAN_HEAD" == "1" || "$DATA_DIR" == *all_atom_contact* ) ]]; then
+    BIO_PHASE_SUBSET_SOURCE_INCLUDE="all_atom_contact"
+  else
+    BIO_PHASE_SUBSET_SOURCE_INCLUDE=""
+  fi
+fi
 
 TRAIN_PHASES="${TRAIN_PHASES:-sft}"
 GFLOWNET_SFT_CONFIG="${GFLOWNET_SFT_CONFIG:-config/train/biomed_annotations_affinity_gflownet_sft_4090.yaml}"
@@ -413,6 +421,11 @@ if [[ "$BUILD_BIO_PHASE_SUBSETS" == "1" || "$BUILD_BIO_PHASE_SUBSETS" == "true" 
     --test-ratio "$TEST_RATIO"
     --summary "$DATA_DIR/bio_phase_subsets.json"
   )
+  if [[ -n "$BIO_PHASE_SUBSET_SOURCE_INCLUDE" ]]; then
+    for pattern in $BIO_PHASE_SUBSET_SOURCE_INCLUDE; do
+      subset_args+=(--source-path-include "$pattern")
+    done
+  fi
   run_cx "${subset_args[@]}"
 fi
 
@@ -522,6 +535,7 @@ printf 'Train phases: %s\n' "$TRAIN_PHASES"
 printf 'Curation: fast=%s resume=%s index_only=%s output=%s\n' "$FAST_CURATE" "$RESUME_CURATE" "$CURATE_INDEX_ONLY" "$DATA_DIR"
 printf 'Phase subsets: build=%s static=%s rows -> %s structure_dynamics=%s rows -> %s\n' \
   "$BUILD_BIO_PHASE_SUBSETS" "$STATIC_STRUCTURE_TARGET_ROWS" "$STATIC_STRUCTURE_DATA_DIR" "$STRUCTURE_DYNAMICS_TARGET_ROWS" "$STRUCTURE_DYNAMICS_GFLOWNET_DATA_DIR"
+printf 'Phase subset source-path include: %s\n' "${BIO_PHASE_SUBSET_SOURCE_INCLUDE:-<none>}"
 printf 'Model-stage coordinate head: uma=%s internal=%s long_all_atom_8192=%s configs=%s\n' \
   "$ENABLE_UMA_COORDINATE_HEAD" "$ENABLE_UMA_INTERNAL_COORDINATES" "$ENABLE_LONG_ALL_ATOM_CARTESIAN_HEAD" "${EXTRA_TRAIN_CONFIGS:-<none>}"
 printf 'Note: coordinate/internal-coordinate heads are model-stage overrides; standalone GFlowNet phases train token-set policies over the generated structure-dynamics candidate vocabulary.\n'

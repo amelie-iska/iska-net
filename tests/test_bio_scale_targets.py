@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.build_bio_phase_subsets import build_subset
 from scripts.check_bio_scale_targets import check_targets
+from iska_reasoner.data.dataset import GraphJsonlDataset
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -91,8 +92,9 @@ def test_bio_phase_subsets_dereference_index_only_rows(tmp_path: Path):
 
     assert dynamics_summary["selected_rows"] == 1
     dynamics_rows = (tmp_path / "dynamics" / "train.jsonl").read_text(encoding="utf-8")
-    assert "d0" in dynamics_rows
-    assert "__jsonl_ref__" not in dynamics_rows
+    assert "__jsonl_ref__" in dynamics_rows
+    dataset = GraphJsonlDataset(tmp_path / "dynamics" / "train.jsonl")
+    assert dataset[0].id == "d0"
 
 
 def test_check_bio_scale_targets_warns_only_for_source_limited_dna(tmp_path: Path):
